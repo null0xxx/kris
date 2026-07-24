@@ -23,7 +23,24 @@ the profile claims — ``--bind / /`` is not a sandbox, whoever asked for it.
 which keeps this module deterministic and unit-testable without ``tmp_path``.
 
 **SCOPE.** §8.1 shows a ``prlimit …`` prefix; that wrapper is T2.06. The argv
-returned here starts at ``"bwrap"`` and ends with ``--chdir <cwd> -- <argv…>``.
+returned here starts at ``bwrap_path`` (the §8.1 bare ``"bwrap"`` by default,
+an absolute validated path on the real exec path — a bare name is re-resolved
+against ``PATH`` at spawn time, and an early writable ``PATH`` entry is a shim
+that would run the tool with no namespaces at all) and ends with
+``--chdir <cwd> -- <argv…>``.
+
+**NAMED RESIDUAL — under ``ws`` with ``venv_exists=True``, workspace content
+outranks system tools BY DESIGN (§8.2).** ``<workspace>/.venv/bin`` is PREPENDED
+ahead of ``/usr/bin``, and under ``ws`` the workspace is BOTH writable and
+untrusted, so a planted ``.venv/bin/python`` hijacks an approved ``python``
+(verified inside a real bwrap child). Appending instead would defeat the point
+of §8.2 — a project venv MUST win for build/test tooling — so the order is
+deliberately NOT changed here. Two things bound and must close it: the blast
+radius is the sandbox itself (network off, writes confined to the workspace,
+no host view), and approval binds a NAME (§7.4), which is the gap — the T3.x
+approval renderer/dispatcher owns surfacing WHICH binary will actually run, or
+requiring an absolute ``argv[0]``, so the user is not approving ``python`` while
+``<workspace>/.venv/bin/python`` executes. Flagged for the tools phase.
 
 **DEVIATION from the §8.1 template (line 586): ``--clearenv`` + scratch
 ``--setenv``, never ``--unsetenv``.** bwrap does NOT clear the environment by
@@ -229,6 +246,7 @@ def build_argv(
     lc_all: str | None = None,
     term: str | None = None,
     env_extra: Mapping[str, str] | None = None,
+    bwrap_path: str = "bwrap",
 ) -> list[str]:
     """Build the §8.1/§8.2 ``bwrap`` argv for ``profile``.
 
@@ -250,7 +268,12 @@ def build_argv(
     :param term: optional ``TERM`` for the child (§8.3 allowlist).
     :param env_extra: §8.3 tool-specific env additions (e.g. ``{"CI": "1"}``),
         validated by :func:`lsassist.sandbox.env.project_env`.
-    :returns: a fresh ``list[str]`` starting with ``"bwrap"``. Deterministic:
+    :param bwrap_path: program placed at ``argv[0]``. Defaults to the §8.1 bare
+        name (T2.05 behaviour); the exec path passes the absolute path that
+        :func:`~lsassist.sandbox.availability.probe` located and validated, so
+        the binary that was attested is the binary that runs. Rendered verbatim
+        — no lookup, no filesystem check (§2.2 purity).
+    :returns: a fresh ``list[str]`` starting with ``bwrap_path``. Deterministic:
         identical inputs always yield an identical argv (env keys are sorted).
     :raises SandboxProfileError: unknown/absent profile, a structurally invalid
         path/argv, or a mount shape that contradicts the profile.
@@ -261,6 +284,10 @@ def build_argv(
     cache_dir = _checked_path("cache_dir", cache_dir)
     tool_argv = _checked_argv(argv)
     _check_mount_shape(workspace, cache_dir)
+    if not isinstance(bwrap_path, str) or not bwrap_path or "\x00" in bwrap_path:
+        raise SandboxProfileError(
+            f"bwrap_path must be a non-empty NUL-free str, got {bwrap_path!r}"
+        )
 
     # THE profile gate: one exhaustive, fail-closed dispatch. Anything that is
     # not a rendered V1 member — a bare "ro" string, ``None``, or a profile
@@ -287,7 +314,7 @@ def build_argv(
     env = project_env(path=path, lc_all=lc_all, term=term, extra=env_extra)
 
     out: list[str] = [
-        "bwrap",
+        bwrap_path,
         # §8.3 boundary: mount/pid/ipc/uts/net namespaces (net OFF — there is no
         # --share-net in either V1 profile), TIOCSTI defense, orphan prevention.
         "--unshare-all",

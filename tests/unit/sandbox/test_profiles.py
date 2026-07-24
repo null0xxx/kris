@@ -509,3 +509,34 @@ def test_nul_in_path_rejected() -> None:
             cache_dir=CACHE,
             argv=TOOL,
         )
+
+
+# ---------------------------------------------------------------------------
+# T2.06 addition: the program at argv[0] is a PARAMETER, defaulting to §8.1
+# ---------------------------------------------------------------------------
+
+
+def test_default_program_is_the_spec_bare_name() -> None:
+    """T2.05 behaviour is preserved exactly when the caller says nothing."""
+    assert ro()[0] == "bwrap"
+    assert ws()[0] == "bwrap"
+
+
+def test_absolute_program_path_is_rendered_verbatim() -> None:
+    """The exec path pins the probed binary so no PATH lookup happens at spawn."""
+    argv = ro(bwrap_path="/usr/bin/bwrap")
+    assert argv[0] == "/usr/bin/bwrap"
+    assert argv[1:] == EXPECTED_RO[1:]
+
+
+@pytest.mark.parametrize("bad", ["", None, 0, b"/usr/bin/bwrap", "/usr/bin/bw\x00rap"])
+def test_malformed_program_path_rejected(bad: object) -> None:
+    with pytest.raises(SandboxProfileError):
+        ro(bwrap_path=bad)
+
+
+def test_program_path_is_keyword_only() -> None:
+    with pytest.raises(TypeError):
+        build_argv(  # type: ignore[misc]
+            Profile.RO, workspace=WS, cwd=CWD, cache_dir=CACHE, argv=TOOL
+        )
