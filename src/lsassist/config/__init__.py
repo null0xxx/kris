@@ -7,6 +7,11 @@ from lsassist.config.canary import (
     expected_canary_digests,
     provision_canaries,
 )
+from lsassist.config.schema import (
+    Config,
+    ConfigVersionError,
+    load_config,
+)
 from lsassist.config.xdg import (
     LAYOUT,
     ConfigSecurityError,
@@ -20,12 +25,15 @@ __all__ = [
     "CANARY_HONEYFILES",
     "LAYOUT",
     "CanaryEntry",
+    "Config",
     "ConfigSecurityError",
+    "ConfigVersionError",
     "LayoutKind",
     "XdgPaths",
     "canary_registry",
     "check_security",
     "ensure_layout",
     "expected_canary_digests",
+    "load_config",
     "provision_canaries",
 ]
