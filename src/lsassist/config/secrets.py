@@ -53,6 +53,7 @@ __all__ = [
 ENV_VAR_PREFIX = "LSASSIST_"
 KEYRING_ITEM_PREFIX = "lsassist"
 _FALLBACK_MODE = 0o600
+_MAX_SECRET_BYTES = 64 * 1024  # bounded read of the fallback secret file (§7.5)
 
 
 class SecretNotFoundError(Exception):
@@ -156,7 +157,16 @@ def _from_keyring(name: str, keyring: Keyring | None) -> str | None:
 
 
 def _from_file(paths: XdgPaths, name: str) -> str | None:
-    """0600 fallback file; fail-closed checks mirror xdg.check_security (§12.1)."""
+    """0600 fallback file; fail-closed checks mirror xdg.check_security (§12.1).
+
+    TOCTOU-safe (§7.5, mirrors :func:`kernel_secret._load`): the ``lstat``
+    pre-check gives fast, specific errors for the common non-race cases, but the
+    *authoritative* symlink/kind/ownership/mode decision is made on the file
+    descriptor. ``os.open`` uses ``O_NOFOLLOW`` (a path swapped to a symlink
+    after the pre-check raises ``ELOOP`` → :class:`ConfigSecurityError`, never
+    followed), the checks re-run on ``os.fstat(fd)``, and the value is read from
+    that same fd — so no attacker-controlled path is ever re-opened.
+    """
     target = _fallback_path(paths, name)
     try:
         st = os.lstat(target)
@@ -175,7 +185,32 @@ def _from_file(paths: XdgPaths, name: str) -> str | None:
         raise ConfigSecurityError(
             f"secret fallback file mode {actual:04o} exceeds {_FALLBACK_MODE:04o}: {target}"
         )
-    value = target.read_text(encoding="utf-8").strip()
+    try:
+        # O_NONBLOCK: no-op for regular files, but stops a FIFO/blocking-device
+        # swapped in during the race window from hanging the open (availability).
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as exc:
+        raise ConfigSecurityError(
+            f"secret fallback file unreadable (fail-closed): {target}"
+        ) from exc
+    try:
+        fst = os.fstat(fd)  # authoritative: checks the OPENED inode, not the path
+        if not stat.S_ISREG(fst.st_mode):
+            raise ConfigSecurityError(f"secret fallback file is not a regular file: {target}")
+        if fst.st_uid != os.geteuid():
+            raise ConfigSecurityError(
+                f"secret fallback file owned by uid {fst.st_uid}, "
+                f"expected {os.geteuid()}: {target}"
+            )
+        actual = stat.S_IMODE(fst.st_mode)
+        if actual & ~_FALLBACK_MODE:
+            raise ConfigSecurityError(
+                f"secret fallback file mode {actual:04o} exceeds {_FALLBACK_MODE:04o}: {target}"
+            )
+        data = os.read(fd, _MAX_SECRET_BYTES)
+    finally:
+        os.close(fd)
+    value = data.decode("utf-8").strip()
     return value if value else None
 
 

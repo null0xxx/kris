@@ -12,6 +12,7 @@ whose ``str``/``repr`` never leak — materialization only via ``.reveal()``
 from __future__ import annotations
 
 import os
+import signal
 import stat
 from pathlib import Path
 
@@ -166,6 +167,102 @@ def test_fallback_foreign_owner_refused(
     monkeypatch.setattr(os, "geteuid", lambda: real_euid + 1)
     with pytest.raises(ConfigSecurityError):
         resolve_secret(NAME, paths=paths, keyring=FakeKeyring())
+
+
+# --- (6b) TOCTOU: target swapped to a symlink between check and read -> refuse -
+
+
+def test_from_file_toctou_symlink_swap_fails_closed(
+    paths: XdgPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§7.5 / I6 / I8: a same-uid attacker swaps the fallback file for a symlink
+    in the TOCTOU window between the ownership/mode check and the read.
+
+    The check passes on the original 0600 regular inode; a path-reopening read
+    (``read_text``) would then follow the swapped symlink and leak the EVIL
+    target (the Kimi API-key sink, AC-09/AC-12). Fail-closed requires the read
+    to ``O_NOFOLLOW``-open the *checked* inode, so the swap raises
+    :class:`ConfigSecurityError` and the EVIL value is never returned.
+    """
+    safe = _write_fallback(paths, "sk-SAFEcanary-real-fallback-value")
+    evil = paths.config_home / "evil-target"
+    evil.write_text("sk-EVILcanary-attacker-swapped-value", encoding="utf-8")
+
+    real_lstat = os.lstat
+    swapped = False
+
+    def swapping_lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal swapped
+        # Return the real (regular-file) stat so every check passes...
+        result = real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+        if not swapped and os.fspath(path) == os.fspath(safe):  # type: ignore[arg-type]
+            # ...then win the race exactly once: replace the checked path with a
+            # symlink to the attacker's file, after the stat was taken.
+            swapped = True
+            os.unlink(safe)
+            os.symlink(evil, safe)
+        return result
+
+    monkeypatch.setattr("lsassist.config.secrets.os.lstat", swapping_lstat)
+
+    with pytest.raises(ConfigSecurityError):
+        secret = resolve_secret(NAME, paths=paths, keyring=FakeKeyring())
+        # Unreached on the fixed impl. On the buggy impl the read followed the
+        # swapped symlink and returned the attacker value: assert it here so the
+        # RED run reports the concrete leak (AssertionError escapes pytest.raises).
+        assert "EVIL" not in secret.reveal(), (
+            f"TOCTOU leak: fallback read returned attacker value {secret.reveal()!r}"
+        )
+
+    assert swapped is True  # the race was actually driven
+
+
+# --- (6c) TOCTOU availability: target swapped to a writerless FIFO -> refuse ----
+
+
+def test_from_file_toctou_fifo_swap_fails_closed(
+    paths: XdgPaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Availability sibling of the symlink race: O_NOFOLLOW rejects a swapped-in
+    symlink but NOT a swapped-in FIFO. A same-uid attacker who replaces the
+    checked regular file with a writerless FIFO would hang a blocking
+    ``O_RDONLY`` open forever (local DoS). ``O_NONBLOCK`` makes the open return
+    immediately so the ``fstat`` ``S_ISREG`` check rejects the FIFO fail-closed.
+    """
+    safe = _write_fallback(paths, "sk-SAFEcanary-real-fallback-value")
+
+    real_lstat = os.lstat
+    swapped = False
+
+    def swapping_lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal swapped
+        result = real_lstat(path, *args, **kwargs)  # type: ignore[arg-type]
+        if not swapped and os.fspath(path) == os.fspath(safe):  # type: ignore[arg-type]
+            # Win the race once: replace the checked regular file with a FIFO
+            # that has no writer (a blocking open would never return).
+            swapped = True
+            os.unlink(safe)
+            os.mkfifo(safe, 0o600)
+        return result
+
+    monkeypatch.setattr("lsassist.config.secrets.os.lstat", swapping_lstat)
+
+    # Belt-and-suspenders: without O_NONBLOCK the writerless-FIFO open blocks
+    # forever and would wedge the whole suite. The alarm converts such a
+    # regression into a fast, deterministic failure instead of a hang.
+    def _on_alarm(signum: int, frame: object) -> None:
+        raise AssertionError("FIFO-swap open blocked (O_NONBLOCK regression?)")
+
+    old_handler = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.alarm(5)
+    try:
+        with pytest.raises(ConfigSecurityError):
+            resolve_secret(NAME, paths=paths, keyring=FakeKeyring())
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+    assert swapped is True  # the race was actually driven
 
 
 # --- (7) no source at all -> typed error with first-run wizard hint ------------

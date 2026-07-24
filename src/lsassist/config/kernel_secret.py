@@ -63,7 +63,9 @@ def _load(paths: XdgPaths, target: Path) -> bytes:
     """Startup load: §12.1 chain checks + O_NOFOLLOW read + exact-length check."""
     check_security(paths)  # ownership / mode-at-most / no symlink, per-component lstat
     try:
-        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        # O_NONBLOCK: no-op for regular files, but stops a FIFO/blocking-device
+        # swapped in during the race window from hanging the open (availability).
+        fd = os.open(target, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError as exc:
         raise ConfigSecurityError(f"kernel.secret unreadable (fail-closed): {target}") from exc
     try:
