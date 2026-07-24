@@ -1,0 +1,63 @@
+{
+  "_comment": "AC-12 canary seed corpus (SPEC §12.4 / §14.3). EVERY value here is SYNTHETIC / deliberately fake decoy material — no real secret appears. Each 'canaries' entry MUST be matched by its class's redaction pattern via re.search (100% coverage). Each 'false_positives' entry MUST match NO pattern in REDACTION_PATTERNS.",
+  "canaries": [
+    {
+      "value": "sk-CANARYkimiDECOY0000000000000000000000000000000000000000",
+      "class_label": "kimi-api-key"
+    },
+    {
+      "value": "sk-kimiFORcodingCANARYdecoySYNTHETIC0000000000000000000000",
+      "class_label": "kimi-api-key"
+    },
+    {
+      "value": "sk-CANARYskDECOY00000000",
+      "class_label": "sk-api-key"
+    },
+    {
+      "value": "sk-DECOYopenaiStyleCANARYkey01234",
+      "class_label": "sk-api-key"
+    },
+    {
+      "value": "ghp_CANARYdecoyGITHUBpat0000000000000000",
+      "class_label": "github-pat"
+    },
+    {
+      "value": "AKIACANARYDECOY00000",
+      "class_label": "aws-access-key-id"
+    },
+    {
+      "value": "-----BEGIN RSA PRIVATE KEY-----\nU1lOVEhFVElDLUNBTkFSWS1ERUNPWS1OT1QtQS1SRUFMLUtFWQ==\nSYNTHETIC CANARY DECOY NOT A REAL KEY\n-----END RSA PRIVATE KEY-----",
+      "class_label": "private-key"
+    },
+    {
+      "value": "-----BEGIN OPENSSH PRIVATE KEY-----\nc3ludGhldGljIGNhbmFyeSBkZWNveSBub3QgcmVhbA==\nSYNTHETIC CANARY DECOY\n-----END OPENSSH PRIVATE KEY-----",
+      "class_label": "private-key"
+    },
+    {
+      "value": "-----BEGIN PRIVATE KEY-----\nU1lOVEhFVElDLUNBTkFSWS1ERUNPWQ==\nSYNTHETIC CANARY DECOY\n-----END PRIVATE KEY-----",
+      "class_label": "private-key"
+    },
+    {
+      "value": "sk-or-v1-CANARYdecoySYNTHETIC0123456789abcdef01234567",
+      "class_label": "kimi-api-key"
+    },
+    {
+      "value": "sk-proj-CANARYdecoy00001234",
+      "class_label": "sk-api-key"
+    }
+  ],
+  "false_positives": [
+    "/home/null/.config/lsassist/config.toml",
+    "src/lsassist/config/redaction_patterns.py",
+    "https://api.kimi.com/coding/v1",
+    "commit a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "sha256:0f9e8d7c6b5a4938271605f4e3d2c1b0a99887766554433221100ffeeddccbbaa",
+    "def load_config(path):\n    return None",
+    "The quick brown fox jumps over the lazy dog.",
+    "AKIA-not-a-real-key",
+    "ghp-not-a-token",
+    "sk-tooShort",
+    "disk-0123456789abcdefghij",
+    "task_0123456789abcdefghij"
+  ]
+}
