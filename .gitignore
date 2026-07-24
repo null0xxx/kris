@@ -1,0 +1,21 @@
+# Byte-compiled / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environments (ADR-005 venv lives at ~/.local/share/lsassist/venv)
+.venv/
+venv/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Secrets — never commit (SPEC §13 / I8)
+*.key
+*.pem
+secrets*

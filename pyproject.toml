@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lsassist"
+version = "0.1.0"
+description = "Personal Linux AI assistant — security-first, sandboxed (SPEC Gate 4)"
+requires-python = ">=3.12"
+dependencies = [
+    # Runtime allowlist per SPEC §13.1. Exact pins+hashes live in
+    # requirements.lock; install via ADR-005 venv path, never plain pip.
+    "httpx",
+    "pydantic",
+    "jsonschema",
+    "prompt_toolkit",
+    "rich",
+    "secretstorage",
+]
+
+[project.scripts]
+lsassist = "lsassist.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# mypy --strict applies ONLY to TCB modules (SPEC §2.3 / §23.1):
+# kernel, policy, sandbox, audit, recovery, config, contracts.
+[[tool.mypy.overrides]]
+module = [
+    "lsassist.kernel.*",
+    "lsassist.policy.*",
+    "lsassist.sandbox.*",
+    "lsassist.audit.*",
+    "lsassist.recovery.*",
+    "lsassist.config.*",
+    "lsassist.contracts.*",
+]
+strict = true
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Count TCB lines of code against the SPEC §2.3 size budget.
+
+TCB packages (SPEC §2.3): kernel, policy, sandbox, audit, recovery, config,
+contracts. NOTE: the `tools/` dispatcher core is also TCB per §2.3, but the
+dispatcher does not exist yet (T1.02 bootstrap); individual tool handlers are
+explicitly NOT TCB. When tools/dispatcher core lands, add it here.
+
+Counts non-blank, non-comment lines of *.py under src/lsassist/<pkg>/.
+Budget: 6,000 LOC warn, 8,000 LOC hard stop (exit 1). SPEC §21 stop criteria.
+
+Usage: scripts/loc-count [--root <repo-root>]
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+TCB_PACKAGES = ["kernel", "policy", "sandbox", "audit", "recovery", "config", "contracts"]
+WARN_BUDGET = 6000
+HARD_STOP = 8000
+
+
+def count_loc(root: Path) -> int:
+    total = 0
+    for pkg in TCB_PACKAGES:
+        pkg_dir = root / "src" / "lsassist" / pkg
+        if not pkg_dir.is_dir():
+            continue
+        for py_file in sorted(pkg_dir.rglob("*.py")):
+            for line in py_file.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    total += 1
+    return total
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent,
+        help="repository root (default: parent of this script)",
+    )
+    args = parser.parse_args()
+
+    total = count_loc(args.root)
+    print(f"TCB LOC: {total} / {WARN_BUDGET} (hard stop {HARD_STOP})")
+    if total > HARD_STOP:
+        print("ERROR: TCB LOC exceeds hard stop — feature freeze (SPEC §21)", file=sys.stderr)
+        return 1
+    if total > WARN_BUDGET:
+        print("WARNING: TCB LOC exceeds 6,000 budget", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
