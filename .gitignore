@@ -19,3 +19,5 @@ venv/
 *.key
 *.pem
 secrets*
+# ...but source modules may legitimately carry the name (T1.09)
+!src/lsassist/config/secrets.py
