@@ -184,7 +184,8 @@ def test_no_source_raises_typed_error_with_hint(paths: XdgPaths) -> None:
 
 def test_secret_wrapper_redacts_stringification() -> None:
     secret = Secret("sk-super-secret-value")
-    for rendered in (str(secret), repr(secret), f"{secret}", "%s" % secret):
+    # "%s" % secret intentionally exercises the %-format redaction path (UP031 suppressed).
+    for rendered in (str(secret), repr(secret), f"{secret}", "%s" % secret):  # noqa: UP031
         assert rendered == "[REDACTED:secret]"
         assert "sk-super-secret-value" not in rendered
     assert secret.reveal() == "sk-super-secret-value"  # explicit, short-lived
@@ -205,7 +206,7 @@ def test_resolution_is_read_only_and_silent(
     monkeypatch.setenv(ENV_VAR, "env-key")
     before = {p for p in paths.config_home.rglob("*")}
 
-    with caplog.at_level("DEBUG"):  # noqa: SIM115 - level name is stable
+    with caplog.at_level("DEBUG"):
         resolve_secret(NAME, paths=paths, keyring=FakeKeyring())
 
     after = {p for p in paths.config_home.rglob("*")}

@@ -68,7 +68,9 @@ SPEC_TOOL_MANIFEST_SCHEMA_JSON = r"""
     "purpose": {"type": "string", "maxLength": 300},
     "input_schema": {"type": "object"},
     "output_schema": {"type": "object"},
-    "permission_class": {"enum": ["AUTO_READ", "AUTO_SCOPED_WRITE", "CONFIRM_ONCE", "CONFIRM_EXACT", "DENY_ALWAYS"]},
+    "permission_class": {
+        "enum": ["AUTO_READ", "AUTO_SCOPED_WRITE", "CONFIRM_ONCE", "CONFIRM_EXACT", "DENY_ALWAYS"]
+    },
     "capabilities": {
       "type": "object",
       "required": ["fs", "net", "proc"],
