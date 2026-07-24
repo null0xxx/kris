@@ -22,12 +22,17 @@ the profile claims — ``--bind / /`` is not a sandbox, whoever asked for it.
 ``venv_exists`` BOOLEAN parameter; the actual check is the T2.06 runner's job,
 which keeps this module deterministic and unit-testable without ``tmp_path``.
 
-**SCOPE.** §8.1 shows a ``prlimit …`` prefix; that wrapper is T2.06. The argv
-returned here starts at ``bwrap_path`` (the §8.1 bare ``"bwrap"`` by default,
-an absolute validated path on the real exec path — a bare name is re-resolved
-against ``PATH`` at spawn time, and an early writable ``PATH`` entry is a shim
-that would run the tool with no namespaces at all) and ends with
-``--chdir <cwd> -- <argv…>``.
+**SCOPE.** The argv returned here starts at ``bwrap_path`` (the §8.1 bare
+``"bwrap"`` by default, an absolute validated path on the real exec path — a
+bare name is re-resolved against ``PATH`` at spawn time, and an early writable
+``PATH`` entry is a shim that would run the tool with no namespaces at all) and
+ends with ``--chdir <cwd> -- <argv…>``. §8.1's ``prlimit …`` caps are NOT a
+wrapper around this argv: since HARDEN-03 they are the head of the INNER
+command, so :func:`~lsassist.sandbox.availability.compose_exec_argv` passes
+``prlimit_prefix(…) + tool argv`` as the ``argv`` parameter below and this
+builder renders them like any other command line. (Outside, ``--nproc`` is
+charged per real UID over TASKS and stops ``bwrap`` from creating its namespace
+at all — measured; see :mod:`~lsassist.sandbox.prlimit`.)
 
 **NAMED RESIDUAL — under ``ws`` with ``venv_exists=True``, workspace content
 outranks system tools BY DESIGN (§8.2).** ``<workspace>/.venv/bin`` is PREPENDED
@@ -71,10 +76,12 @@ defense-in-depth, not a substitute for a clean spawn: the runner MUST start the
 child with an explicitly emptied environment — spawn with ``env={}``, since
 ``env=None`` or a copy of the parent environ hands the whole thing to bwrap
 itself — and MUST exec this argv LIST directly, never through a shell string
-(§7.6 rule 8: argv exec, no shell). The runner also owns the ``prlimit`` wrapper
-and every filesystem check — including whether the §8.1 system binds exist
-(``/lib64`` is absent on some distributions); whether to degrade a missing bind
-is a decision made against a real filesystem, which this builder never consults.
+(§7.6 rule 8: argv exec, no shell). The ``prlimit`` caps are spliced in by
+:func:`~lsassist.sandbox.availability.compose_exec_argv`, which is also the only
+module allowed to touch the filesystem — including whether the §8.1 system binds
+exist (``/lib64`` is absent on some distributions); whether to degrade a missing
+bind is a decision made against a real filesystem, which this builder never
+consults.
 """
 
 from __future__ import annotations
@@ -89,6 +96,7 @@ __all__ = [
     "SYSTEM_RO_BINDS",
     "SandboxProfileError",
     "build_argv",
+    "checked_argv",
 ]
 
 #: §8.1 read-only system binds, in template order. bwrap applies mount
@@ -186,8 +194,16 @@ def _checked_path(name: str, value: object) -> str:
     return value
 
 
-def _checked_argv(argv: object) -> list[str]:
-    """Return the tool argv as a fresh list, or raise :class:`SandboxProfileError`."""
+def checked_argv(argv: object) -> list[str]:
+    """Return the tool argv as a fresh list, or raise :class:`SandboxProfileError`.
+
+    Public because :func:`~lsassist.sandbox.availability.compose_exec_argv` must
+    apply these rules to the TOOL argv before prepending the ``prlimit`` caps to
+    it (HARDEN-03): once the fragment is in front, ``build_argv`` would be
+    checking ``prlimit`` — an empty tool argv, or a ``str`` mistaken for a
+    sequence, would sail through and compose into a sandbox that runs the caps
+    program with no tool at all. One set of rules, applied at both ends.
+    """
     if isinstance(argv, str) or not isinstance(argv, Sequence):
         raise SandboxProfileError(f"argv must be a sequence of str, got {type(argv).__name__}")
     items = list(argv)
@@ -282,7 +298,7 @@ def build_argv(
     workspace = _checked_path("workspace", workspace)
     cwd = _checked_path("cwd", cwd)
     cache_dir = _checked_path("cache_dir", cache_dir)
-    tool_argv = _checked_argv(argv)
+    tool_argv = checked_argv(argv)
     _check_mount_shape(workspace, cache_dir)
     if not isinstance(bwrap_path, str) or not bwrap_path or "\x00" in bwrap_path:
         raise SandboxProfileError(

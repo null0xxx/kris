@@ -19,7 +19,20 @@ Four properties, each structural rather than behavioural:
    sandbox.
 4. **A full exec argv is unconstructable without a passing probe**, and — more
    importantly — the pinned paths are re-validated at compose time, so even a
-   forged receipt cannot redirect the exec to a shim.
+   forged receipt cannot redirect the exec to a shim. Since HARDEN-03 the
+   ``prlimit`` path is ALSO required to lie inside the sandbox's own mount view
+   (:data:`~lsassist.sandbox.profiles.SYSTEM_RO_BINDS`), because it is now the
+   head of the INNER command: a path ``bwrap`` does not mount would turn every
+   exec into an ENOENT.
+
+**ARGV ORDER (HARDEN-03, human-approved).** The composed argv is
+``<abs bwrap> … -- <abs prlimit> --nproc… <tool argv…>``: the caps are applied
+INSIDE the sandbox, not around it. Measured on the host — outside, ``--nproc``
+is charged per real UID and counts TASKS, so ``bwrap``'s own
+``clone(CLONE_NEWUSER)`` dies with ``Creating new namespace failed: Resource
+temporarily unavailable`` in a normal desktop session; inside, all four caps
+land (``256 1024 4194304 40``). The order tests below pin CONTENT AND ORDER of
+that placement.
 
 NO REAL CHILD PROCESS is spawned anywhere in this file: ``which_fn``/``run_fn``
 are injected, and the one test that exercises the default runner monkeypatches
@@ -381,16 +394,17 @@ def test_functional_argv_mirrors_the_profiles_own_system_binds() -> None:
     assert "/lib64" in bound
 
 
-def test_functional_argv_is_not_wrapped_in_the_prlimit_prefix() -> None:
-    """Pins the KNOWN RESIDUAL rather than letting it be discovered twice.
+def test_functional_argv_runs_bwrap_directly_like_the_composed_argv() -> None:
+    """The probe's OUTER program is the composed argv's outer program (HARDEN-03).
 
-    The functional step runs bwrap directly, so on a host where the outer
-    `--nproc` blocks namespace creation (prlimit.py HOST FINDING 1) the probe
-    passes while the composed argv still fails. Reproduced on this host; left
-    for the pending human decision on `--nproc` placement.
+    Before the fix this was a KNOWN RESIDUAL: the probe ran bwrap directly while
+    the composed argv wrapped it in `prlimit --nproc=256 …`, so on a busy host the
+    probe PASSED and the real exec still died with `Creating new namespace failed:
+    Resource temporarily unavailable`. With the caps moved inside the sandbox both
+    now start the same way, so a passing probe and a working exec agree.
     """
     argv = functional_probe_argv(BWRAP_PATH)
-    assert argv[0] == BWRAP_PATH
+    assert argv[0] == BWRAP_PATH == compose()[0]
     assert not any(element.startswith("--nproc") for element in argv)
     assert "prlimit" not in " ".join(argv)
 
@@ -631,7 +645,9 @@ def test_a_shallow_copy_is_an_identical_receipt_and_is_accepted() -> None:
     """
     duplicate = copy.copy(token())
     assert duplicate == token()
-    assert compose(available=duplicate)[0] == PRLIMIT_PATH
+    composed = compose(available=duplicate)
+    assert composed[0] == BWRAP_PATH
+    assert composed[composed.index("--") + 1] == PRLIMIT_PATH
 
 
 def test_even_a_fully_forged_receipt_cannot_redirect_the_exec() -> None:
@@ -669,36 +685,61 @@ def test_receipt_repr_shows_the_pinned_paths_and_no_sentinel() -> None:
 
 
 # ---------------------------------------------------------------------------
-# COMPOSITION — pinned prlimit prefix + pinned bwrap argv, in that order
+# COMPOSITION — pinned bwrap argv whose INNER command starts with the pinned
+# prlimit prefix (HARDEN-03 order: caps inside the sandbox, not around it)
 # ---------------------------------------------------------------------------
 
 
-def test_composed_argv_is_prlimit_prefix_then_bwrap_argv() -> None:
+def test_composed_argv_is_bwrap_argv_whose_inner_command_carries_the_caps() -> None:
     composed = compose()
-    expected = prlimit_prefix(TIMEOUT, prlimit_path=PRLIMIT_PATH) + build_argv(
+    expected = build_argv(
         profile=Profile.WS,
         workspace=WS,
         cwd=CWD,
         cache_dir=CACHE,
-        argv=TOOL,
+        argv=prlimit_prefix(TIMEOUT, prlimit_path=PRLIMIT_PATH) + TOOL,
         bwrap_path=BWRAP_PATH,
     )
     assert composed == expected
 
 
+def test_the_prlimit_fragment_is_the_head_of_the_inner_command() -> None:
+    """ORDER, pinned exactly: `-- <prlimit> --nproc… --cpu… <tool argv…>`.
+
+    Applied to the OUTER process the caps are measurably broken here (RLIMIT_NPROC
+    is per-real-UID and counts TASKS, so bwrap cannot create its namespace);
+    applied to the inner command all four land. This test is what stops the
+    fragment drifting back outside, or being scattered mid-argv.
+    """
+    composed = compose()
+    prefix = prlimit_prefix(TIMEOUT, prlimit_path=PRLIMIT_PATH)
+    separator = composed.index("--")
+    assert composed[separator + 1 : separator + 1 + len(prefix)] == prefix
+    assert composed[separator + 1 + len(prefix) :] == TOOL
+
+
 def test_composed_argv_uses_the_pinned_absolute_programs() -> None:
     composed = compose()
-    assert composed[0] == PRLIMIT_PATH
-    assert composed[5] == BWRAP_PATH
+    assert composed[0] == BWRAP_PATH
+    assert composed[composed.index("--") + 1] == PRLIMIT_PATH
     assert "bwrap" not in composed
     assert "prlimit" not in composed
+
+
+def test_bwrap_is_the_outer_program_and_prlimit_is_never_before_it() -> None:
+    """The old §8.1 order (`prlimit … bwrap …`) must not come back."""
+    composed = compose()
+    assert composed[0] == BWRAP_PATH
+    assert composed.index(PRLIMIT_PATH) > composed.index("--")
+    assert not any(element.startswith("--nproc") for element in composed[: composed.index("--")])
 
 
 def test_composed_argv_has_exactly_one_double_dash() -> None:
     """`build_argv` already emits the `--` terminator — never append a second."""
     composed = compose()
+    prefix_len = len(prlimit_prefix(TIMEOUT, prlimit_path=PRLIMIT_PATH))
     assert composed.count("--") == 1
-    assert composed.index("--") == len(composed) - len(TOOL) - 1
+    assert composed.index("--") == len(composed) - len(TOOL) - prefix_len - 1
 
 
 def test_tool_argv_is_last_and_verbatim() -> None:
@@ -710,20 +751,117 @@ def test_cpu_limit_tracks_the_composed_timeout() -> None:
 
 
 def test_the_fork_bomb_control_is_present_in_the_composed_argv() -> None:
-    """§18 T-14 guard: a future `--nproc` placement fix must not DELETE it.
+    """§18 T-14 guard: the placement fix must not DELETE the cap.
 
-    In the §8.1 outer position this flag currently prevents bwrap from starting
-    on a busy host (documented in prlimit.py), and the tempting "fix" is to drop
-    it — which would silently remove the fork-bomb cap. This test makes that
-    removal loud.
+    HARDEN-03 moved this flag from the outer process (where it stopped bwrap
+    from starting at all on a busy host) to the inner command (where it measures
+    the sandbox's own task count and actually bites: `--nproc=32` inside gives
+    `spawned=29 refused=31`). The tempting alternative "fix" was to drop the
+    flag — a security regression wearing the costume of a bug fix. This test
+    makes any such removal loud.
     """
     assert any(element.startswith("--nproc=") for element in compose())
 
 
 def test_ro_profile_composes_too() -> None:
     composed = compose(profile=Profile.RO)
-    assert composed[5] == BWRAP_PATH
+    assert composed[0] == BWRAP_PATH
+    assert composed[composed.index("--") + 1] == PRLIMIT_PATH
     assert composed[composed.index("--dev") + 2 :][:3] == ["--ro-bind", WS, WS]
+
+
+# ---------------------------------------------------------------------------
+# MOUNT-VIEW REACHABILITY (HARDEN-03) — prlimit now runs INSIDE the sandbox
+# ---------------------------------------------------------------------------
+
+
+def forged(*, bwrap_path: str = BWRAP_PATH, prlimit_path: str = PRLIMIT_PATH) -> SandboxAvailable:
+    """A receipt carrying the issuance sentinel but arbitrary pinned paths.
+
+    Not reachable through `probe` — the point is to exercise the compose-time
+    re-validation, which is the check that still holds if a receipt is forged.
+    """
+    receipt = object.__new__(SandboxAvailable)
+    object.__setattr__(receipt, "version", (0, 9, 0))
+    object.__setattr__(receipt, "bwrap_path", bwrap_path)
+    object.__setattr__(receipt, "prlimit_path", prlimit_path)
+    object.__setattr__(receipt, "_issuance", availability_mod._ISSUED_BY_PROBE)
+    return receipt
+
+
+@pytest.mark.parametrize(
+    "reachable", ["/usr/bin/prlimit", "/bin/prlimit", "/usr/local/bin/prlimit"]
+)
+def test_a_prlimit_inside_the_mount_view_is_accepted(reachable: str) -> None:
+    """`/usr` and `/bin` are already --ro-bind'ed, so no new bind is needed.
+
+    Forged rather than probed on purpose: `probe` realpath-resolves, and on a
+    merged-/usr host `/bin/prlimit` would collapse to `/usr/bin/prlimit` before
+    the guard ever saw it. The check under test is the compose-time one.
+    """
+    composed = compose(available=forged(prlimit_path=reachable))
+    assert composed[composed.index("--") + 1] == reachable
+
+
+def test_a_probed_receipt_puts_its_own_pinned_prlimit_inside() -> None:
+    issued = probe(which_fn=which_found, run_fn=runner())
+    composed = compose(available=issued)
+    assert composed[composed.index("--") + 1] == issued.prlimit_path == PRLIMIT_PATH
+
+
+def test_a_prlimit_outside_every_ro_bind_is_refused() -> None:
+    """`/opt/bin/prlimit` is not in the mount view — every exec would be ENOENT."""
+    with pytest.raises(SandboxUnavailable) as excinfo:
+        compose(available=forged(prlimit_path="/opt/bin/prlimit"))
+    assert "/opt/bin/prlimit" in str(excinfo.value)
+    assert excinfo.value.reason == SANDBOX_UNAVAILABLE_REASON
+
+
+@pytest.mark.parametrize(
+    "unreachable",
+    [
+        "/opt/bin/prlimit",
+        "/snap/bin/prlimit",
+        "/srv/tools/prlimit",
+        # Segment traps: a prefix match would wrongly accept these.
+        "/usrlocal/bin/prlimit",
+        "/binary/prlimit",
+    ],
+)
+def test_the_mount_view_check_fires_even_for_a_trusted_directory(
+    monkeypatch: pytest.MonkeyPatch, unreachable: str
+) -> None:
+    """The guard is INDEPENDENT of the trusted-directory allowlist.
+
+    With the program's directory added to the trusted set, the host-side check
+    passes and only the mount-view check can refuse — which is exactly the case
+    a future `_TRUSTED_BIN_DIRS` addition would create.
+    """
+    directory = unreachable.rsplit("/", 1)[0]
+    monkeypatch.setattr(availability_mod, "_TRUSTED_BIN_DIRS", frozenset({"/usr/bin", directory}))
+    with pytest.raises(SandboxUnavailable) as excinfo:
+        compose(available=forged(prlimit_path=unreachable))
+    assert "mount view" in str(excinfo.value)
+    assert unreachable in str(excinfo.value)
+
+
+def test_bwrap_is_not_required_to_be_inside_the_mount_view() -> None:
+    """bwrap runs on the HOST; only the inner command must be visible inside."""
+    composed = compose(available=forged(bwrap_path="/usr/local/bin/bwrap"))
+    assert composed[0] == "/usr/local/bin/bwrap"
+
+
+def test_every_trusted_program_directory_is_inside_the_mount_view() -> None:
+    """The two allowlists must not drift apart (a canary, not a tautology).
+
+    Adding a directory to `_TRUSTED_BIN_DIRS` that `SYSTEM_RO_BINDS` does not
+    cover would make a probe pass and every composed exec fail with ENOENT.
+    """
+    for directory in availability_mod._TRUSTED_BIN_DIRS:
+        assert any(
+            directory == bind or directory.startswith(bind.rstrip("/") + "/")
+            for bind in SYSTEM_RO_BINDS
+        ), directory
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +943,18 @@ def test_compose_propagates_a_bad_profile_input_and_returns_no_argv() -> None:
         compose(argv=[])
 
 
+@pytest.mark.parametrize("bad", [[], "python", ["", "-m", "pytest"], 42, None])
+def test_a_tool_argv_the_caps_prefix_could_hide_is_still_refused(bad: Any) -> None:
+    """The TOOL argv is validated BEFORE the prlimit fragment is prepended.
+
+    Otherwise `build_argv` would only ever inspect `prlimit`: an empty argv would
+    compose into a sandbox that runs the caps program alone (exit 0, no tool), and
+    a `str` would be spread into one-character arguments.
+    """
+    with pytest.raises(SandboxProfileError):
+        compose(argv=bad)
+
+
 def test_compose_reads_no_environment(
     tripwired_environ: Callable[[], contextlib.AbstractContextManager[None]],
 ) -> None:
@@ -819,7 +969,8 @@ def test_compose_reads_no_environment(
             argv=TOOL,
             timeout_s=TIMEOUT,
         )
-    assert composed[0] == PRLIMIT_PATH
+    assert composed[0] == BWRAP_PATH
+    assert composed[composed.index("--") + 1] == PRLIMIT_PATH
 
 
 # ---------------------------------------------------------------------------

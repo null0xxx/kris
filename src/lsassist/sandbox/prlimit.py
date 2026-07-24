@@ -1,13 +1,13 @@
 """Pure ``prlimit`` prefix builder for the §8.1 resource caps (ADR-002; T-14).
 
-SPEC §8.1 wraps every sandboxed exec in::
+SPEC §8.1 caps every sandboxed exec with::
 
-    prlimit --nproc=256 --nofile=1024 --as=4G --cpu=<timeout+10> bwrap …
+    prlimit --nproc=256 --nofile=1024 --as=4G --cpu=<timeout+10>
 
-:func:`prlimit_prefix` renders exactly that leading fragment — the five argv
-elements up to (not including) ``bwrap``. It is the §18 T-14 control: ``nproc``
-caps fork bombs, ``nofile`` caps descriptor exhaustion, ``as`` caps address
-space, ``cpu`` caps CPU time.
+:func:`prlimit_prefix` renders exactly that five-element fragment. It is the §18
+T-14 control: ``nproc`` caps fork bombs, ``nofile`` caps descriptor exhaustion,
+``as`` caps address space, ``cpu`` caps CPU time. Where the fragment goes is not
+where §8.1 literally puts it — see PLACEMENT below.
 
 **MANDATORY DEVIATION FROM THE §8.1 TEXT: ``--as=4G`` → ``--as=4294967296``.**
 util-linux ``prlimit`` has NO size-suffix parser. Verified on the host
@@ -33,38 +33,48 @@ failure mode is not a rejected flag but a wildly wrong limit that is accepted.
 replace the limits with nothing. This module stays pure — it renders whatever
 path it is given and checks no filesystem.
 
-**HOST FINDING 1 — ``--nproc`` PLACEMENT (a T3.03 runner decision; a human
-checkpoint is pending, so nothing here is reordered).** ``RLIMIT_NPROC`` is
-charged per REAL UID and counts TASKS (threads), not processes, so it is already
-near its ceiling in a desktop session (this host: 1729 threads for uid 1000).
-Applying it to the OUTER process makes ``bwrap``'s ``clone(CLONE_NEWUSER)`` fail
-before the sandbox exists, so in the §8.1 position the flag currently enforces
-NOTHING here::
+**PLACEMENT: THIS PREFIX RUNS INSIDE THE SANDBOX, NOT AROUND IT (HARDEN-03 —
+implemented, human-approved; a deliberate, documented deviation from the §8.1
+literal template, which SPEC §8.1 is being updated to match).**
+:func:`~lsassist.sandbox.availability.compose_exec_argv` emits
+``bwrap … -- prlimit --nproc… <tool argv…>``, i.e. this fragment is the HEAD OF
+THE INNER COMMAND. The template's outer position was measured to be broken:
+``RLIMIT_NPROC`` is charged per REAL UID and counts TASKS (threads), not
+processes, so it is already near its ceiling in a desktop session (this host:
+1472 to 2024 threads for uid 1000). Applying it to the OUTER process makes
+``bwrap``'s ``clone(CLONE_NEWUSER)`` fail before the sandbox exists — the flag
+enforces NOTHING and takes the entire exec path down with it::
 
     $ prlimit --nproc=256 bwrap --unshare-all … -- /bin/true
     bwrap: Creating new namespace failed: Resource temporarily unavailable
     $ prlimit --nproc=4096 bwrap --unshare-all … -- /bin/true   # succeeds
 
-``--nofile``/``--as``/``--cpu`` are unaffected in that position. Applied INSIDE
-the sandbox all four caps work as §8.1 intends, because the child's user
-namespace starts its own task count near zero; ``/usr/bin/prlimit`` is already
-in the mount view via ``--ro-bind /usr /usr``, it ``execve``s (so pid, exit
-status and signals stay transparent), and the tool cannot raise the cap because
-soft == hard (``EPERM``/``EINVAL``)::
+``--nofile``/``--as``/``--cpu`` were unaffected in that position; only
+``--nproc`` broke it. Applied INSIDE, all four caps work as §8.1 intends,
+because the child's user namespace starts its own task count near zero::
 
     $ bwrap … -- prlimit --nproc=256 --nofile=1024 --as=4294967296 --cpu=40 \
           bash -c 'echo $(ulimit -u) $(ulimit -n) $(ulimit -v) $(ulimit -t)'
     256 1024 4194304 40
     # with --nproc=32 inside: spawned=29 refused=31
 
-**Whoever resolves this must not simply DELETE the outer ``--nproc``**: that
-removes the §18 T-14 fork-bomb control entirely — a security regression wearing
-the costume of a bug fix. The two acceptable resolutions are to move the whole
-prefix inside the sandbox, or to apply ``--nproc`` in the child while keeping
-the rest outside. A test asserts that ``--nproc=`` survives somewhere in the
-composed argv, so the control cannot be dropped silently.
+Four measured facts make the inner position safe: ``/usr/bin/prlimit`` is
+ALREADY in the mount view via the §8.1 ``--ro-bind /usr /usr`` (no new bind, and
+:func:`~lsassist.sandbox.availability.compose_exec_argv` refuses a ``prlimit``
+path the sandbox would not mount); util-linux ``prlimit`` ``execve``s rather
+than forking, so pid, exit status and signals stay transparent (``exit 42`` →
+rc 42, ``kill -9`` → rc 137) and §6.3's process-group SIGKILL semantics are
+untouched; ``prlimit`` sets soft == hard and an unprivileged process may only
+LOWER a hard limit, so the sandboxed tool cannot raise its own caps (verified
+``EPERM``/``EINVAL``); and ``tests/e2e/test_sandbox_exec.py`` spawns the real
+composed argv and reads the limits back out from inside.
 
-**HOST FINDING 2 — what ``--cpu`` ACTUALLY does (measured; the §8.1 value is
+**The alternative "fix" — DELETING the outer ``--nproc`` — was rejected**: it
+removes the §18 T-14 fork-bomb control entirely, a security regression wearing
+the costume of a bug fix. A test asserts that ``--nproc=`` survives somewhere in
+the composed argv, so the control cannot be dropped silently.
+
+**HOST FINDING — what ``--cpu`` ACTUALLY does (measured; the §8.1 value is
 kept verbatim, only the rationale is corrected).** ``RLIMIT_CPU`` is a CPU-time
 budget, NOT a wall-clock backstop:
 
@@ -110,9 +120,10 @@ __all__ = [
     "prlimit_prefix",
 ]
 
-#: §8.1 ``--nproc``: max processes/threads (fork-bomb cap, §18 T-14). See HOST
-#: FINDING 1 — in the §8.1 outer position this currently enforces nothing here,
-#: and deleting it would be a security regression, not a fix.
+#: §8.1 ``--nproc``: max processes/threads (fork-bomb cap, §18 T-14). Enforced
+#: against the SANDBOX's own task count — see PLACEMENT in the module docstring
+#: for why the outer position enforced nothing, and why deleting the flag would
+#: have been a security regression rather than a fix.
 NPROC_LIMIT = 256
 
 #: §8.1 ``--nofile``: max open file descriptors.
@@ -151,7 +162,9 @@ def prlimit_prefix(timeout_s: int, *, prlimit_path: str = _DEFAULT_PRLIMIT) -> l
 
     :param timeout_s: the runner's wall-clock timeout for this exec, in seconds.
         Must be an ``int`` in ``1..600`` (§6.4). ``bool`` is refused.
-    :param prlimit_path: the program to place at ``argv[0]``. Defaults to the
+    :param prlimit_path: the program placed at the HEAD OF THE FRAGMENT (which
+        the exec path splices in after ``bwrap``'s ``--``, so it is the inner
+        command's program, not the composed argv's ``argv[0]``). Defaults to the
         §8.1 bare name; callers on the exec path pass the absolute path the
         availability probe validated. Rendered verbatim — this function performs
         no lookup and no filesystem check (§2.2 purity).

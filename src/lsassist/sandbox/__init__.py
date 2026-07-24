@@ -12,9 +12,11 @@ built by :func:`compose_exec_argv`, which requires a :class:`SandboxAvailable`
 token that only a successful :func:`probe` can issue. There is no route to a
 runnable, unsandboxed command line. Public surface:
 
-- :func:`compose_exec_argv` — the ONLY complete exec argv: ``prlimit`` caps +
-  ``bwrap`` profile + the tool argv, gated on a probe receipt and emitting the
-  pinned absolute program paths.
+- :func:`compose_exec_argv` — the ONLY complete exec argv: the ``bwrap`` profile
+  whose inner command is the ``prlimit`` caps followed by the tool argv (the
+  caps run INSIDE the sandbox — HARDEN-03; outside, ``--nproc`` is charged per
+  real UID and stops ``bwrap`` creating its namespace at all). Gated on a probe
+  receipt and emitting the pinned absolute program paths.
 - :func:`probe` / :class:`SandboxAvailable` / :class:`SandboxUnavailable` — the
   §8.3 availability gate and its ``sandbox_unavailable`` reason code.
 - :func:`build_argv` — ``(Profile, workspace, cwd, cache_dir, argv, …)`` → the

@@ -23,15 +23,16 @@ sets the same precedent). It attests nothing about the moment of exec: the host
 can change between probe and spawn, and the probe does not evaluate the caller's
 mount arguments.
 
-**KNOWN RESIDUAL, do not overstate the probe.** The functional step runs
-``bwrap`` DIRECTLY — it is not wrapped in the §8.1 ``prlimit`` prefix. On a host
-where HOST FINDING 1 in :mod:`~lsassist.sandbox.prlimit` bites (outer
-``--nproc`` below the UID's current thread count), the probe therefore PASSES
-while the composed argv still dies with ``bwrap: Creating new namespace failed:
-Resource temporarily unavailable``. Reproduced on this host. Wrapping the probe
-in the same prefix would close the gap — and would also block the entire exec
-path here — so it is deliberately left for the pending human decision on
-``--nproc`` placement rather than pre-empted.
+**THE PROBE AND THE SPAWN NOW START THE SAME WAY (HARDEN-03).** The functional
+step runs ``bwrap`` directly, and since the §8.1 ``prlimit`` caps moved INSIDE
+the sandbox (see :func:`compose_exec_argv`) so does the composed argv — the two
+share an outer program, so a passing probe and a working exec no longer
+disagree. They did before: with the caps applied to the OUTER process the probe
+PASSED while every real exec died with ``bwrap: Creating new namespace failed:
+Resource temporarily unavailable``, because ``RLIMIT_NPROC`` is charged per REAL
+UID and counts TASKS (measured here: ~1.5k threads for uid 1000 against
+``--nproc=256``). ``tests/e2e/test_sandbox_exec.py`` spawns the composed argv
+for real and reads the limits back out, so that gap cannot reopen silently.
 
 **PROGRAM PATHS ARE PINNED (this is load-bearing).** ``bwrap`` and ``prlimit``
 are located ONCE, resolved with :func:`os.path.realpath`, required to live in
@@ -57,9 +58,22 @@ cannot produce an argv that lacks the namespace flags; the token gate is
 defense in depth over that, not a substitute for it.
 
 **Composition detail.** ``profiles.build_argv`` already terminates with
-``--chdir <cwd> -- <tool argv…>``. The composed argv therefore contains exactly
-ONE ``--`` separator (assuming the tool's own argv carries none); appending a
-second would hand ``bwrap`` a literal ``--`` as the program name.
+``--chdir <cwd> -- <inner command…>``, and the inner command handed to it is
+``prlimit_prefix(…) + tool argv``. The composed argv therefore contains exactly
+ONE ``--`` separator (assuming the tool's own argv carries none), with the
+``prlimit`` fragment immediately after it; appending a second would hand
+``bwrap`` a literal ``--`` as the program name.
+
+**BECAUSE ``prlimit`` RUNS INSIDE, ITS PATH MUST BE VISIBLE INSIDE.** The pinned
+paths are validated against the HOST filesystem's trusted directories, which
+says nothing about the sandbox's mount view. :func:`compose_exec_argv` therefore
+also requires ``prlimit_path`` to lie under one of
+:data:`~lsassist.sandbox.profiles.SYSTEM_RO_BINDS` — today every trusted
+directory does (``/usr/bin`` and ``/usr/local/bin`` under the ``/usr`` bind,
+``/bin`` under its own), so no new bind is needed; the check exists so that
+widening the trusted set later cannot silently produce an argv whose every exec
+is an ENOENT. ``bwrap`` itself is deliberately NOT subject to it: it executes on
+the host, before any mount view exists.
 
 **No shell, ever (§7.6 rule 8).** The default runner invokes an argv LIST. The
 sandboxed exec itself is not performed here — the T3.03 runner receives the
@@ -78,7 +92,7 @@ from typing import ClassVar, Final, NamedTuple
 
 from lsassist.contracts.sandbox_profile import Profile
 from lsassist.sandbox.prlimit import prlimit_prefix
-from lsassist.sandbox.profiles import SYSTEM_RO_BINDS, build_argv
+from lsassist.sandbox.profiles import SYSTEM_RO_BINDS, build_argv, checked_argv
 
 __all__ = [
     "BWRAP",
@@ -222,6 +236,18 @@ def _is_trusted_program(path: object) -> bool:
         and os.path.isabs(path)
         and os.path.dirname(path) in _TRUSTED_BIN_DIRS
     )
+
+
+def _is_in_mount_view(path: str) -> bool:
+    """True when ``path`` is reachable inside the profile's own mount view (PURE).
+
+    Segment-aware, so ``/binary/prlimit`` is not "inside" the ``/bin`` bind and
+    ``/usrlocal/…`` is not inside ``/usr``. Mirrors
+    :func:`lsassist.sandbox.profiles._is_within` deliberately rather than
+    importing it: this is availability's fail-closed decision, and profiles must
+    stay free of any notion of which programs the exec path runs.
+    """
+    return any(path == bind or path.startswith(bind.rstrip("/") + "/") for bind in SYSTEM_RO_BINDS)
 
 
 def _excerpt(stderr: object) -> str:
@@ -403,33 +429,53 @@ def compose_exec_argv(
     term: str | None = None,
     env_extra: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Compose the COMPLETE §8.1 exec argv: ``prlimit`` caps + ``bwrap`` profile.
+    """Compose the COMPLETE §8.1 exec argv: ``bwrap`` profile + ``prlimit`` caps.
 
     This is the only supported way to obtain a runnable command line for a
     sandboxed tool. The result is::
 
-        <abs prlimit> --nproc… --nofile… --as… --cpu…   (prlimit.prlimit_prefix)
         <abs bwrap>   --unshare-all … --chdir <cwd> --  (profiles.build_argv)
+        <abs prlimit> --nproc… --nofile… --as… --cpu…   (prlimit.prlimit_prefix)
         <tool argv…>
 
     Both programs are the PINNED absolute paths from the receipt, so no ``PATH``
-    lookup happens at spawn time. The ``prlimit`` fragment sits in its §8.1
-    position, BEFORE ``bwrap``; see :mod:`~lsassist.sandbox.prlimit` for the
-    measured consequences of that order and of ``--cpu``'s real semantics —
-    T3.03 runner decisions, flagged there rather than silently changed here.
+    lookup happens at spawn time.
+
+    **DELIBERATE, DOCUMENTED DEVIATION FROM THE §8.1 LITERAL TEMPLATE
+    (HARDEN-03, human-approved at the T2.06 review checkpoint; SPEC §8.1 is
+    being updated to match).** The template writes ``prlimit … bwrap … -- tool``,
+    i.e. the caps on the OUTER process. Measured, that does not work:
+    ``RLIMIT_NPROC`` is charged per REAL UID and counts TASKS, so with a desktop
+    session's ~1.5k threads already charged to uid 1000, ``--nproc=256`` makes
+    ``bwrap``'s own ``clone(CLONE_NEWUSER)`` fail — ``bwrap: Creating new
+    namespace failed: Resource temporarily unavailable`` — and the §18 T-14
+    fork-bomb cap enforces nothing while breaking the whole exec path. Applied to
+    the INNER command all four caps land exactly (``256 1024 4194304 40``
+    measured inside; a bounded fork loop under ``--nproc=32`` gives
+    ``spawned=29 refused=31``), ``/usr/bin/prlimit`` is already in the mount view
+    via the §8.1 ``--ro-bind /usr /usr`` (no new bind), util-linux ``prlimit``
+    ``execve``s rather than forking (so pid, exit status and signals stay
+    transparent and §6.3's process-group SIGKILL semantics are untouched), and
+    the caps cannot be raised again because ``prlimit`` sets soft == hard and an
+    unprivileged process may only LOWER a hard limit. Deleting ``--nproc``
+    instead was rejected as a security regression; a test asserts it survives in
+    the composed argv. See :mod:`~lsassist.sandbox.prlimit` for ``--cpu``'s real
+    (CPU-budget, not wall-clock) semantics, still a T3.03 runner concern.
 
     :param available: the receipt from :func:`probe`. REQUIRED and keyword-only,
         so no exec argv exists without a passing probe. It is re-checked by
         IDENTITY of type and issuance sentinel (``object.__new__``, ``copy``,
         ``pickle``, :func:`dataclasses.replace` and subclasses are all refused),
-        and its pinned paths are re-validated against the trusted directories —
-        the second check is the one that still holds if a receipt is forged.
+        its pinned paths are re-validated against the trusted directories, and
+        ``prlimit_path`` must additionally be reachable INSIDE the mount view —
+        those last checks are the ones that still hold if a receipt is forged.
     :param timeout_s: the runner's wall-clock budget; drives ``--cpu``.
-    :returns: a fresh ``list[str]`` beginning with the absolute ``prlimit``
-        path. Exactly ONE ``--`` element is added (by ``build_argv``); the
-        tool's argv is the tail, verbatim.
-    :raises SandboxUnavailable: ``available`` is not a probe-issued receipt, or
-        carries a program path outside the trusted directories.
+    :returns: a fresh ``list[str]`` beginning with the absolute ``bwrap`` path.
+        Exactly ONE ``--`` element is added (by ``build_argv``), followed by the
+        five-element ``prlimit`` fragment and then the tool's argv, verbatim.
+    :raises SandboxUnavailable: ``available`` is not a probe-issued receipt,
+        carries a program path outside the trusted directories, or carries a
+        ``prlimit`` path the sandbox would not mount.
     :raises ~lsassist.sandbox.prlimit.PrlimitError: invalid ``timeout_s``.
     :raises ~lsassist.sandbox.profiles.SandboxProfileError: invalid profile,
         path, argv, or mount shape.
@@ -454,13 +500,28 @@ def compose_exec_argv(
                 f"receipt {label}={program!r} is not an absolute path in "
                 f"{sorted(_TRUSTED_BIN_DIRS)}"
             )
+    # `prlimit` is the head of the INNER command, so the host-side check above is
+    # not enough: a path bwrap never mounts turns every exec into an ENOENT.
+    # `bwrap` is exempt — it runs on the host, outside any mount view.
+    if not _is_in_mount_view(available.prlimit_path):
+        raise SandboxUnavailable(
+            f"receipt prlimit_path={available.prlimit_path!r} is not inside the sandbox "
+            f"mount view {list(SYSTEM_RO_BINDS)}; the caps run INSIDE the sandbox, so a "
+            "prlimit the sandbox cannot see would fail every exec"
+        )
 
-    return prlimit_prefix(timeout_s, prlimit_path=available.prlimit_path) + build_argv(
+    # The caps are the head of the inner command, NOT a wrapper around bwrap —
+    # see the deviation note above for the measurement that forced this order.
+    # The tool argv is validated FIRST: behind the prefix, `build_argv` would be
+    # inspecting `prlimit`, and an empty (or `str`) tool argv would compose into
+    # a sandbox that runs the caps program alone.
+    inner = prlimit_prefix(timeout_s, prlimit_path=available.prlimit_path) + checked_argv(argv)
+    return build_argv(
         profile=profile,
         workspace=workspace,
         cwd=cwd,
         cache_dir=cache_dir,
-        argv=argv,
+        argv=inner,
         venv_exists=venv_exists,
         lc_all=lc_all,
         term=term,
