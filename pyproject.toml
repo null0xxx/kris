@@ -48,6 +48,71 @@ module = [
 ]
 strict = true
 
+# ---------------------------------------------------------------------------
+# Branch-coverage gate — SPEC §23.1 floor, ADR-011 tooling (T2.13).
+#
+# Invoked as `coverage`, never `pytest-cov` (ADR-011 rejected the plugin):
+#     coverage run --branch --source=<the three packages below> -m pytest ...
+#     coverage report --show-missing
+#
+# ADR-011's "Named limitation" governs how to read a green result: coverage
+# measures EXECUTION, not ASSERTION. This config's only job is to make sure the
+# number cannot be reached by weakening the measurement. Every knob below that
+# could forgive an unexecuted line or an untaken arc is pinned, because each one
+# is a way to report 100% while §23.1's invariant is violated. The gate's own
+# tests live in tests/unit/scripts/test_coverage_gate.py.
+[tool.coverage.run]
+branch = true
+# Scope = SPEC §23.1's TCB packages for Phase 2. `audit`/`recovery` join the
+# same floor in Phase 4. `source` (not `include`) is deliberate: `source` drags
+# never-imported modules into the report at 0%, so dead untested code turns the
+# gate red instead of vanishing from it.
+source = ["src/lsassist/kernel", "src/lsassist/policy", "src/lsassist/sandbox"]
+# No `omit`: every omit pattern is a hole in the floor.
+
+[tool.coverage.report]
+# Exactly 100 — `coverage.results.should_fail_under` special-cases this value so
+# the total must really be 100.0; at 99.9 rounding would buy a pass.
+fail_under = 100
+show_missing = true
+precision = 0
+ignore_errors = false
+
+# `exclude_lines` REPLACES coverage's defaults, which in 7.x are three patterns:
+# `# pragma: no cover`, a `...` stub body, and `if TYPE_CHECKING:`. Two of those
+# are dropped here on purpose:
+#   * `pragma: no cover` is forbidden in TCB packages by §23.1, so honouring it
+#     in the config would make the config itself the loophole. The CI job also
+#     greps for it, belt and braces.
+#   * `if TYPE_CHECKING:` has a genuinely untaken arc at runtime; §23.1 wants
+#     that visible rather than silently forgiven.
+# What remains is the `...` stub body of a `typing.Protocol` / `@overload`
+# declaration (14 of them in kernel/machine.py and policy/recheck.py). `...` is
+# a no-op by language semantics, so this exclusion cannot hide behaviour — the
+# alternative would be tests that call Protocol stubs purely to paint the number
+# green, which is exactly the theatre ADR-011 warns against.
+exclude_lines = ['^\s*(((async )?def .*?)?[\])]+(\s*->.*?)?:\s*)?\.\.\.\s*(#|$)']
+# `exclude_also`/`partial_also` are APPEND vectors — coverage merges them into
+# the lists above in CoverageConfig.post_process. Empty, and asserted empty.
+exclude_also = []
+partial_also = []
+
+# `partial_branches` = [] removes the `# pragma: no branch` escape.
+#
+# DO NOT also write `partial_branches_always = []`. coverage's
+# `PythonFileReporter.no_branch_lines()` joins BOTH lists with `join_regex` and
+# passes the result to `lines_matching` with no empty-string guard, and
+# `join_regex([])` is `""`, which `re.finditer` matches at every position. With
+# both lists empty, every line in every file lands in `no_branch`, every missing
+# branch arc is discarded, and the gate reports 100% branch on a suite with no
+# branch tests at all. So the two default patterns are pinned here explicitly:
+# they only ever match a literally-constant condition, whose "missing" arc is
+# unreachable by language semantics, and their presence keeps the joined regex
+# non-empty. (`exclude_lines` is safe from the same footgun only because
+# PythonParser._raw_parse guards it with `if self.exclude:`.)
+partial_branches = []
+partial_branches_always = ['while (True|1|False|0):', 'if (True|1|False|0):']
+
 [tool.ruff]
 target-version = "py312"
 src = ["src", "tests"]

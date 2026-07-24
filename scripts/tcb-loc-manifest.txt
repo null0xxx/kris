@@ -1,0 +1,79 @@
+# scripts/tcb-loc-manifest.txt — the authoritative TCB unit list (SPEC §2.3).
+#
+# Consumed by `scripts/loc-count`. This file, not the script, is the statement
+# of what the Trusted Computing Base is; the script only measures it. Every
+# top-level entry under `src/lsassist/` MUST appear here exactly once, so a new
+# package can never arrive unclassified and therefore uncounted (fail closed).
+#
+# Format:  <status>  <path-relative-to-repo-root>   [# note]
+#
+#   tcb          Counted. MUST exist on disk — absence is manifest drift (exit 1),
+#                which is how a rename or a move of TCB code is caught.
+#   tcb-partial  Counted WHOLE even though SPEC §2.3 admits only part of it to the
+#                TCB. Over-counting is the safe direction; under-counting is not.
+#                MUST exist on disk.
+#   tcb-planned  TCB per §2.3 but NOT built yet. MUST NOT exist on disk. The day
+#                it appears the gate goes red (exit 1) demanding a flip to `tcb`,
+#                and its lines are counted in that same run — so a new TCB unit
+#                can never slip in uncounted.
+#   non-tcb      Explicitly outside the TCB per §2.3. Never counted. Listed only
+#                so the coverage check can tell "known non-TCB" from "unknown".
+#
+# Budget (SPEC §2.3): target ≤ 6,000 LOC, hard stop 8,000 LOC. Crossing the
+# ceiling means FEATURE FREEZE — never relaxing the budget or trimming this file.
+#
+# KNOWN RESIDUALS — ways the number can shrink without the TCB shrinking. The
+# drift check closes the first; the others are open and must be caught in review:
+#   1. CLOSED  Deleting a row for something still on disk → the entry becomes
+#              unclassified and the gate fails. Renaming a TCB directory fails
+#              twice (old path gone, new path unclassified).
+#   2. OPEN    Relabelling a row `tcb` → `non-tcb` is a lie the gate cannot see.
+#              Partially covered by tests/unit/scripts/test_loc_gate.py::
+#              test_real_manifest_lists_every_spec_2_3_tcb_unit, which pins the
+#              seven §2.3 packages to a counted status.
+#   3. OPEN    Moving TCB logic into a non-TCB package (e.g. `memory/`) that the
+#              TCB then imports. Measured: moving policy/rules.py into memory/
+#              drops the count by 182 lines and the gate stays green. Nothing
+#              enforces SPEC §2.2's dependency direction yet.
+#   4. OPEN    Shrinking LOC without shrinking complexity — one-lining, dense
+#              comprehensions, codegen, or pushing logic into data/config files.
+#              LOC is a proxy for reviewability; only review defends the proxy.
+
+# ---------------------------------------------------------------------------
+# TCB — SPEC §2.3: "kernel/, policy/, sandbox/, audit/ (writer+redactor),
+# recovery/ (checkpoint manager), config/ (secrets resolver), tools/ dispatcher
+# core (without individual handlers)".
+# ---------------------------------------------------------------------------
+tcb          src/lsassist/kernel        # state machine, budgets, verdicts, journal
+tcb          src/lsassist/policy        # permission classes, token mint/verify, rules
+tcb          src/lsassist/sandbox       # bwrap profile builder + prlimit runner
+tcb          src/lsassist/contracts     # not enumerated in §2.3's list, but every TCB
+                                        # unit depends on it and pyproject applies
+                                        # mypy --strict to it; counted deliberately.
+
+# Partial membership. §2.3 admits only a slice of each of these packages, but the
+# gate counts the whole directory: over-counting keeps the budget honest, while
+# file-level cherry-picking would let TCB code hide in a sibling module.
+tcb-partial  src/lsassist/audit         # §2.3 TCB = writer + redactor (whole pkg counted)
+tcb-partial  src/lsassist/recovery      # §2.3 TCB = checkpoint manager (whole pkg counted)
+tcb-partial  src/lsassist/config        # §2.3 TCB = secrets resolver (whole pkg counted)
+
+# Not built yet. `tools/` as a package is NOT TCB (handlers are read as untrusted
+# per §2.3), but the dispatcher core inside it IS. It does not exist today, so it
+# is tracked as `tcb-planned`: the gate fails the moment this path appears until
+# the line is flipped to `tcb`, and counts it in that failing run regardless.
+tcb-planned  src/lsassist/tools/dispatcher.py   # §2.3 "tools/ dispatcher core"
+
+# ---------------------------------------------------------------------------
+# Outside the TCB — SPEC §2.3: "providers (output must be validated), cli
+# rendering, memory content, skill text, repo files, web content".
+# ---------------------------------------------------------------------------
+non-tcb      src/lsassist/__init__.py   # package marker
+non-tcb      src/lsassist/__main__.py   # CLI entrypoint (cli rendering, §2.3)
+non-tcb      src/lsassist/tools         # individual tool handlers (dispatcher core above)
+non-tcb      src/lsassist/cli           # terminal I/O and rendering
+non-tcb      src/lsassist/providers     # Kimi/Ollama adapters
+non-tcb      src/lsassist/memory        # SQLite store, retrieval
+non-tcb      src/lsassist/skills        # skill manifests and text
+non-tcb      src/lsassist/tutor         # Tutor Mode flows
+non-tcb      src/lsassist/coding        # Coding Mode flows

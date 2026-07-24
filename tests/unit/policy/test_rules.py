@@ -402,6 +402,62 @@ def test_r5_safe_commands_not_applicable(argv: list[str]) -> None:
     assert r5(_req("proc.exec", argv=argv), _ctx(), STORES) is None
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["git"],  # bare git — no tokens at all after argv[0]
+        ["git", "--version"],  # an option-only argv: the scan runs off the end
+        ["git", "--help"],
+        ["git", "-C", "/repo"],  # a VALUE option swallows its arg, then argv ends
+        ["git", "-c", "core.pager=cat"],
+        # ADVERSARIAL: the only non-option token is a global option's VALUE that
+        # happens to spell a destructive subcommand (a directory named "reset").
+        # It must NOT be read as the subcommand.
+        ["git", "-C", "reset"],
+        ["git", "--git-dir", "clean"],
+    ],
+)
+def test_r5_git_without_a_subcommand_is_not_destructive(argv: list[str]) -> None:
+    """No subcommand token exists, so the destructive-subcommand rule has nothing
+    to match on and must NOT elevate. Pins the fail-OPEN-is-fine end of R5: this
+    is an elevation heuristic, so "unknown" here means "not applicable", and the
+    scan must not fall back to guessing — mistaking a global option, or an
+    option's VALUE, for a subcommand."""
+    assert r5(_req("proc.exec", argv=argv), _ctx(), STORES) is None
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["git", "stash", "drop"],
+        ["git", "stash", "clear"],
+        ["git", "-C", "/repo", "stash", "drop"],
+        ["env", "git", "stash", "clear"],  # through an exec wrapper (S3)
+    ],
+)
+def test_r5_git_stash_drop_or_clear_is_destructive(argv: list[str]) -> None:
+    """``stash drop``/``stash clear`` discard saved work irreversibly → CONFIRM_EXACT."""
+    assert r5(_req("proc.exec", argv=argv), _ctx(), STORES) is CE
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["git", "stash"],  # no operand at all -> the plain "save" form
+        ["git", "stash", "list"],
+        ["git", "stash", "show"],
+        ["git", "log", "drop"],  # "drop" is only special as stash's FIRST operand
+        ["git", "stash", "list", "drop"],  # ...and only in FIRST position
+    ],
+)
+def test_r5_non_destructive_git_stash_forms_not_applicable(argv: list[str]) -> None:
+    """The destructive set is exactly ``{drop, clear}`` in FIRST-operand position:
+    a bare ``git stash`` (which SAVES work) and the read-only query forms must not
+    be elevated, and the operand match must not degrade into "``drop`` appears
+    anywhere in argv"."""
+    assert r5(_req("proc.exec", argv=argv), _ctx(), STORES) is None
+
+
 def test_r5_type_and_tool_guards() -> None:
     assert r5(_req("fs.read", argv=["rm", "x"]), _ctx(), STORES) is None
     assert r5(_req("proc.exec", argv=[]), _ctx(), STORES) is None

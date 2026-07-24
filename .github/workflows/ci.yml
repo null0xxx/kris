@@ -46,6 +46,47 @@
         {"uses": "actions/checkout@v4"},
         {"name": "TCB LOC budget (SPEC §2.3)", "run": "scripts/loc-count"}
       ]
+    },
+    "tcb-loc": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {"uses": "actions/checkout@v4"},
+        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}},
+        {
+          "name": "TCB LOC checkpoint gate (SPEC §2.3: target 6000, hard stop 8000)",
+          "run": "python3 scripts/loc-count --manifest scripts/tcb-loc-manifest.txt --target 6000 --hard-stop 8000"
+        }
+      ]
+    },
+    "coverage": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {"uses": "actions/checkout@v4"},
+        {
+          "name": "no coverage pragma in the TCB (SPEC §23.1, T2.13 review checkpoint)",
+          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox; do\n  test -d \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
+        },
+        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}},
+        {
+          "uses": "actions/cache@v4",
+          "with": {
+            "path": "~/.cache/pip",
+            "key": "pip-${{ hashFiles('requirements.lock', 'requirements-dev.lock') }}"
+          }
+        },
+        {
+          "name": "install (hashes enforced, ADR-005)",
+          "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
+        },
+        {
+          "name": "branch coverage measurement (ADR-011: coverage, not pytest-cov)",
+          "run": ".venv/bin/python -m coverage run --branch --source=src/lsassist/kernel,src/lsassist/policy,src/lsassist/sandbox -m pytest tests/unit tests/property -q"
+        },
+        {
+          "name": "100% branch floor - blocking (SPEC §23.1; fail_under lives in pyproject.toml)",
+          "run": ".venv/bin/python -m coverage report --show-missing"
+        }
+      ]
     }
   }
 }

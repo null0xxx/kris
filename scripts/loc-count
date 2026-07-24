@@ -1,60 +1,355 @@
 #!/usr/bin/env python3
-"""Count TCB lines of code against the SPEC §2.3 size budget.
+"""TCB LOC checkpoint gate — SPEC §2.3 size budget (T2.12).
 
-TCB packages (SPEC §2.3): kernel, policy, sandbox, audit, recovery, config,
-contracts. NOTE: the `tools/` dispatcher core is also TCB per §2.3, but the
-dispatcher does not exist yet (T1.02 bootstrap); individual tool handlers are
-explicitly NOT TCB. When tools/dispatcher core lands, add it here.
+SPEC §2.3: "Size budget: TCB ≤ 6,000 LOC Gate 4 MVP-ზე; hard stop 8,000 LOC
+(§21 Gate 1 stop criteria). იზომება CI-ში (`tokei`-ს ექვივალენტი count job).
+ზღვარზე გადასვლა = feature freeze, არა budget-ის მოშვება."
 
-Counts non-blank, non-comment lines of *.py under src/lsassist/<pkg>/.
-Budget: 6,000 LOC warn, 8,000 LOC hard stop (exit 1). SPEC §21 stop criteria.
+What is counted is declared in `scripts/tcb-loc-manifest.txt`, not here: the
+manifest is the auditable statement of TCB membership and this script only
+measures it. Drift between the manifest and the tree fails the gate in BOTH
+directions (§2.3 units missing from disk, and `src/lsassist/**` entries missing
+from the manifest), because a size gate that can be satisfied by editing the
+list of things being measured is worse than no gate at all.
 
-Usage: scripts/loc-count [--root <repo-root>]
+COUNTING METHOD — tokei-style, docstrings are COMMENTS, not code
+---------------------------------------------------------------
+§2.3 specifies the budget is measured by a "`tokei` equivalent count job", and
+`tokei` classifies Python triple-quoted doc text as comments, not code. This
+script therefore excludes blank lines, `#` comments, AND module/class/function
+docstrings (located with `ast`, so only strings in true docstring position are
+excluded — a triple-quoted string used as data stays code, which is stricter
+than tokei and therefore the safe direction).
+
+Counting docstrings as code, as the pre-T2.12 version of this script did,
+over-reported the TCB by ~46% (5,850 vs 3,178 over the same tree). Correcting
+that is a MEASUREMENT correction mandated by §2.3's own choice of tool — it is
+NOT a relaxation of the budget, and §2.3's rule that crossing the ceiling means
+feature freeze rather than a bigger budget is untouched. Both numbers are
+printed on every run so the correction stays auditable.
+
+Exit codes
+----------
+    0  count ≤ target
+    0  target < count ≤ hard stop, plus a feature-freeze WARNING on stderr
+    1  count > hard stop  (§2.3 hard stop / §21 stop criteria)
+    1  manifest drift (either direction)
+    2  tooling failure: manifest missing/unreadable/malformed, or a counted
+       source file cannot be decoded or parsed. Never report a small number
+       and pass.
+
+Usage:
+    scripts/loc-count
+    scripts/loc-count --manifest scripts/tcb-loc-manifest.txt \
+                      --target 6000 --hard-stop 8000
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-TCB_PACKAGES = ["kernel", "policy", "sandbox", "audit", "recovery", "config", "contracts"]
-WARN_BUDGET = 6000
-HARD_STOP = 8000
+DEFAULT_TARGET = 6000
+DEFAULT_HARD_STOP = 8000
+
+COUNTED_STATUSES = frozenset({"tcb", "tcb-partial", "tcb-planned"})
+VALID_STATUSES = COUNTED_STATUSES | {"non-tcb"}
+
+EXIT_OK = 0
+EXIT_BUDGET_OR_DRIFT = 1
+EXIT_TOOLING = 2
+
+# Directory entries under src/lsassist/ that are not source and need no manifest row.
+IGNORED_ENTRIES = frozenset({"__pycache__"})
 
 
-def count_loc(root: Path) -> int:
-    total = 0
-    for pkg in TCB_PACKAGES:
-        pkg_dir = root / "src" / "lsassist" / pkg
-        if not pkg_dir.is_dir():
+class ManifestError(Exception):
+    """The manifest is missing, unreadable or malformed — fail closed."""
+
+
+class SourceError(Exception):
+    """A counted source file cannot be decoded or parsed — fail closed."""
+
+
+@dataclass(frozen=True)
+class Entry:
+    status: str
+    path: str  # POSIX, relative to the repo root
+    lineno: int
+
+
+@dataclass(frozen=True)
+class Counts:
+    code: int
+    docstrings: int
+
+
+def load_manifest(manifest_path: Path) -> list[Entry]:
+    """Parse the manifest. Any problem raises ManifestError (fail closed)."""
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ManifestError(f"cannot read manifest {manifest_path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ManifestError(f"manifest {manifest_path} is not valid UTF-8: {exc}") from exc
+
+    entries: list[Entry] = []
+    seen: dict[str, int] = {}
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        fields = raw.split("#", 1)[0].split()
+        if not fields:
             continue
-        for py_file in sorted(pkg_dir.rglob("*.py")):
-            for line in py_file.read_text(encoding="utf-8").splitlines():
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    total += 1
-    return total
+        if len(fields) != 2:
+            raise ManifestError(
+                f"{manifest_path}:{lineno}: expected '<status> <path>', got {raw.strip()!r}"
+            )
+        status, path = fields
+        if status not in VALID_STATUSES:
+            raise ManifestError(
+                f"{manifest_path}:{lineno}: unknown status {status!r} "
+                f"(expected one of {', '.join(sorted(VALID_STATUSES))})"
+            )
+        if path.startswith("/") or ".." in Path(path).parts:
+            raise ManifestError(f"{manifest_path}:{lineno}: path must be relative: {path!r}")
+        if path in seen:
+            raise ManifestError(
+                f"{manifest_path}:{lineno}: duplicate path {path!r} "
+                f"(first seen on line {seen[path]})"
+            )
+        seen[path] = lineno
+        entries.append(Entry(status=status, path=path, lineno=lineno))
+
+    if not entries:
+        raise ManifestError(f"{manifest_path}: no entries — refusing to report 0 TCB LOC")
+    return entries
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _docstring_only_lines(tree: ast.AST, lines: list[str]) -> set[int]:
+    """1-based line numbers occupied *solely* by a docstring.
+
+    A line that holds both code and docstring text (``def f(): "doc"``) is NOT
+    included: it is code, exactly as tokei would score it.
+    """
+    doc_lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if not isinstance(first, ast.Expr):
+            continue
+        value = first.value
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+
+        start, end = first.lineno, first.end_lineno or first.lineno
+        prefix_blank = lines[start - 1][: first.col_offset].strip() == ""
+        suffix = lines[end - 1][first.end_col_offset :].strip()
+        suffix_blank = suffix == "" or suffix.startswith("#")
+
+        if start == end:
+            if prefix_blank and suffix_blank:
+                doc_lines.add(start)
+            continue
+        if prefix_blank:
+            doc_lines.add(start)
+        doc_lines.update(range(start + 1, end))
+        if suffix_blank:
+            doc_lines.add(end)
+    return doc_lines
+
+
+def count_file(py_file: Path) -> Counts:
+    """Count one file tokei-style. Unreadable/unparseable raises SourceError."""
+    try:
+        source = py_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SourceError(f"cannot read {py_file}: {exc}") from exc
+    try:
+        tree = ast.parse(source, filename=str(py_file))
+    except (SyntaxError, ValueError) as exc:
+        raise SourceError(f"cannot parse {py_file}: {exc}") from exc
+
+    lines = source.splitlines()
+    doc_lines = _docstring_only_lines(tree, lines)
+
+    code = 0
+    docstrings = 0
+    for lineno, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue  # blank / comment: never code, and never a "docstring line"
+        if lineno in doc_lines:
+            docstrings += 1
+        else:
+            code += 1
+    return Counts(code=code, docstrings=docstrings)
+
+
+def _python_files(target: Path) -> list[Path]:
+    if target.is_dir():
+        return sorted(p for p in target.rglob("*.py") if p.is_file())
+    return [target] if target.suffix == ".py" else []
+
+
+def count_entries(root: Path, entries: list[Entry]) -> Counts:
+    """Count every counted manifest entry that exists on disk, each file once."""
+    seen: set[Path] = set()
+    code = 0
+    docstrings = 0
+    for entry in entries:
+        if entry.status not in COUNTED_STATUSES:
+            continue
+        target = root / entry.path
+        if not target.exists():
+            continue  # absence is reported by check_drift, not silently counted as 0
+        for py_file in _python_files(target):
+            resolved = py_file.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            counts = count_file(py_file)
+            code += counts.code
+            docstrings += counts.docstrings
+    return Counts(code=code, docstrings=docstrings)
+
+
+def check_drift(root: Path, entries: list[Entry]) -> list[str]:
+    """Manifest ↔ tree drift, both directions. Returns human-readable problems.
+
+    (a) A counted (`tcb` / `tcb-partial`) unit that is not on disk — this is how
+        a rename or a move out of a TCB package is caught, since such a move
+        would otherwise silently drop the unit's lines from the total.
+        A `tcb-planned` unit is the inverse: it must NOT exist yet.
+    (b) A top-level `src/lsassist/**` entry that no manifest row classifies —
+        unknown means unclassified means fail closed. Note the counted-entry
+        rule above is what makes this meaningful: you cannot answer a drift
+        failure by deleting the row, because deleting a row that still exists
+        on disk moves the entry into case (b).
+
+    `non-tcb` rows are classification records only; they are never counted, so
+    their disappearance cannot hide LOC and is not treated as drift. If the code
+    they described moved rather than vanished, case (b) fires on its new home.
+    """
+    problems: list[str] = []
+
+    for entry in entries:
+        target = root / entry.path
+        if entry.status in {"tcb", "tcb-partial"} and not target.exists():
+            problems.append(
+                f"{entry.path} is declared '{entry.status}' (manifest line {entry.lineno}) "
+                f"but does not exist — was it renamed or moved out of the TCB?"
+            )
+        elif entry.status == "tcb-planned" and target.exists():
+            problems.append(
+                f"{entry.path} is declared 'tcb-planned' (manifest line {entry.lineno}) "
+                f"but now exists — flip it to 'tcb' so it is permanently counted"
+            )
+
+    listed = {e.path for e in entries}
+    src = root / "src" / "lsassist"
+    if src.is_dir():
+        for child in sorted(src.iterdir()):
+            if child.name in IGNORED_ENTRIES or child.name.startswith("."):
+                continue
+            if not child.is_dir() and child.suffix != ".py":
+                continue
+            rel = child.relative_to(root).as_posix()
+            if rel not in listed:
+                problems.append(
+                    f"{rel} exists but no manifest row classifies it — "
+                    f"add a 'tcb', 'tcb-partial' or 'non-tcb' row (SPEC §2.3)"
+                )
+    return problems
+
+
+def build_parser() -> argparse.ArgumentParser:
+    here = Path(__file__).resolve().parent
+    parser = argparse.ArgumentParser(
+        prog="loc-count",
+        description="TCB LOC checkpoint gate (SPEC §2.3).",
+    )
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path(__file__).resolve().parent.parent,
-        help="repository root (default: parent of this script)",
+        default=here.parent,
+        help="repository root to measure (default: parent of this script)",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=here / "tcb-loc-manifest.txt",
+        help="TCB unit manifest (default: scripts/tcb-loc-manifest.txt beside this script)",
+    )
+    parser.add_argument(
+        "--target",
+        type=int,
+        default=DEFAULT_TARGET,
+        help=f"soft budget; above it the gate warns (default: {DEFAULT_TARGET}, SPEC §2.3)",
+    )
+    parser.add_argument(
+        "--hard-stop",
+        type=int,
+        default=DEFAULT_HARD_STOP,
+        help=f"hard stop; above it the gate fails (default: {DEFAULT_HARD_STOP}, SPEC §2.3)",
+    )
+    return parser
 
-    total = count_loc(args.root)
-    print(f"TCB LOC: {total} / {WARN_BUDGET} (hard stop {HARD_STOP})")
-    if total > HARD_STOP:
-        print("ERROR: TCB LOC exceeds hard stop — feature freeze (SPEC §21)", file=sys.stderr)
-        return 1
-    if total > WARN_BUDGET:
-        print("WARNING: TCB LOC exceeds 6,000 budget", file=sys.stderr)
-    return 0
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.target > args.hard_stop:
+        print(
+            f"ERROR: --target {args.target} exceeds --hard-stop {args.hard_stop}",
+            file=sys.stderr,
+        )
+        return EXIT_TOOLING
+
+    root: Path = args.root
+    try:
+        entries = load_manifest(args.manifest)
+        counts = count_entries(root, entries)
+    except (ManifestError, SourceError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print("ERROR: TCB LOC gate failed closed — no count reported", file=sys.stderr)
+        return EXIT_TOOLING
+
+    print(
+        f"TCB LOC: {counts.code} / {args.target} (hard stop {args.hard_stop})"
+        f"   [code only; +{counts.docstrings} docstring lines not counted]"
+    )
+
+    problems = check_drift(root, entries)
+    if problems:
+        print(
+            f"ERROR: manifest drift vs {args.manifest} — the TCB LOC number above "
+            f"cannot be trusted (SPEC §2.3):",
+            file=sys.stderr,
+        )
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return EXIT_BUDGET_OR_DRIFT
+
+    if counts.code > args.hard_stop:
+        print(
+            f"ERROR: TCB LOC {counts.code} exceeds the {args.hard_stop} hard stop — "
+            f"FEATURE FREEZE (SPEC §2.3, §21). Shrink the TCB; do not raise the budget.",
+            file=sys.stderr,
+        )
+        return EXIT_BUDGET_OR_DRIFT
+    if counts.code > args.target:
+        print(
+            f"WARNING: TCB LOC {counts.code} exceeds the {args.target} target — "
+            f"SPEC §2.3: crossing the ceiling means FEATURE FREEZE, not relaxing "
+            f"the budget. {args.hard_stop - counts.code} lines to the hard stop.",
+            file=sys.stderr,
+        )
+    return EXIT_OK
 
 
 if __name__ == "__main__":

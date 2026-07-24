@@ -35,6 +35,7 @@ from lsassist.kernel.idempotency import (
     ExecutionState,
     IdempotencyError,
     IdempotencyLedger,
+    LedgerEntry,
     ReplayVerdict,
     SeqConflictError,
     SeqRegressionError,
@@ -411,3 +412,78 @@ def test_restore_rejects_duplicate_and_out_of_order_seqs() -> None:
 def test_highest_seq_is_none_on_an_empty_ledger() -> None:
     assert IdempotencyLedger(SECRET).highest_seq is None
     assert IdempotencyLedger(SECRET).entry(0) is None
+
+
+# --------------------------------------------------------------------------
+# The high-water mark's monotonic guard — a DEFENSIVE invariant, tested at the
+# private helper on purpose (see the docstrings).
+# --------------------------------------------------------------------------
+
+
+def test_no_public_entry_point_reaches_put_with_a_regressing_seq() -> None:
+    """The CONSTRUCTION claim, stated as a test: both callers of ``_put``
+    (:meth:`begin` and :meth:`restore`) reject a seq at/below the high-water mark
+    with :class:`SeqRegressionError` BEFORE the write happens — so the ledger is
+    left untouched and ``_put`` never sees a regressing seq in production. This
+    is why the guard inside ``_put`` is unreachable through the public API, and
+    it is the premise the direct test below depends on."""
+    ledger = IdempotencyLedger(SECRET)
+    assert ledger.begin(_ref(seq=5)).verdict is ReplayVerdict.ALLOWED
+
+    for regressing in (0, 1, 4):  # UNKNOWN seqs at/below the mark
+        with pytest.raises(SeqRegressionError):
+            ledger.begin(_ref(seq=regressing))
+        with pytest.raises(SeqRegressionError):
+            ledger.restore(_ref(seq=regressing), ExecutionState.STARTED, None)
+        # ...and nothing was written on the way to either refusal.
+        assert ledger.entry(regressing) is None
+        assert ledger.highest_seq == 5
+
+
+def test_put_never_lowers_the_high_water_mark() -> None:
+    """DEFENSIVE INVARIANT of ``_put``, driven DIRECTLY at the private helper.
+
+    ``_put``'s ``self._highest_seq is None or entry.ref.seq > self._highest_seq``
+    guard has a FALSE arm that is unreachable through the public API BY
+    CONSTRUCTION (see the test above). It is still load-bearing: ``_put`` is the
+    single write path into the ledger, and without the guard a regressing write
+    would DROP the high-water mark and re-open every seq below it to replay —
+    turning the §4.7 replay guard into a no-op for that range.
+
+    So the arm is pinned by calling ``_put`` directly rather than by deleting the
+    guard to make a coverage number go green; deleting it is exactly the Goodhart
+    failure the §23.1 floor exists to prevent.
+    """
+    ledger = IdempotencyLedger(SECRET)
+    assert ledger.begin(_ref(seq=5)).verdict is ReplayVerdict.ALLOWED
+    assert ledger.highest_seq == 5
+
+    for regressing in (0, 2, 5):
+        ref = _ref(seq=regressing, task_id="direct")
+        ledger._put(
+            LedgerEntry(
+                ref=ref,
+                key=ledger.derive_key(ref),
+                state=ExecutionState.STARTED,
+                result_ref=None,
+            )
+        )
+        # The entry IS written (that is _put's job) but the mark does NOT move.
+        assert ledger.entry(regressing) is not None
+        assert ledger.highest_seq == 5
+
+    # A strictly-higher seq still advances it — the guard gates, it does not freeze.
+    higher = _ref(seq=9, task_id="direct")
+    ledger._put(
+        LedgerEntry(
+            ref=higher,
+            key=ledger.derive_key(higher),
+            state=ExecutionState.STARTED,
+            result_ref=None,
+        )
+    )
+    assert ledger.highest_seq == 9
+
+    # And the surviving mark still refuses a replay below it through the public API.
+    with pytest.raises(SeqRegressionError):
+        ledger.begin(_ref(seq=6, task_id="after"))

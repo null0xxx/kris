@@ -10,6 +10,10 @@ Two test surfaces, per the design:
   hand-written fake :class:`FsView` (no real I/O) to pin first-failure ORDER
   (both within one snapshot and across a sequence) deterministically.
 - ``validate_session_remember`` is the §7.4 V1 "session-remember" rule.
+- the FAIL-CLOSED ``OSError`` arms of :class:`OsFsView` are driven by really
+  unlinking the node / its parent under ``tmp_path`` mid-flight (the racing
+  ``unlink`` the boundary exists to survive), asserting the TYPED
+  :class:`RecheckError` rather than a leaked ``OSError`` or a silent pass.
 """
 
 from __future__ import annotations
@@ -18,10 +22,13 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from lsassist.policy.recheck import (
     UNLIMITED_USES_SENTINEL,
     OsFsView,
     PathSnapshot,
+    RecheckError,
     RecheckVerdict,
     recheck,
     snapshot_paths,
@@ -250,3 +257,85 @@ def test_session_remember_unlimited_at_nonsession_ttl_rejected() -> None:
 def test_session_remember_bounded_allowed_any_ttl() -> None:
     assert validate_session_remember(1, ttl_s=300, session_ttl_s=3600, unlimited=False) is True
     assert validate_session_remember(5, ttl_s=3600, session_ttl_s=3600, unlimited=False) is True
+
+
+# ---------------------------------------------------------------------------
+# OsFsView — the §7.5 I/O boundary must fail CLOSED on a racing OSError.
+#
+# These are REAL fs races, not injected ones: the probed node (or its parent)
+# is genuinely unlinked between the approval-time snapshot and the probe, which
+# is exactly the mid-check ``unlink`` the try/except exists for. The contract is
+# that such a race raises the TYPED ``RecheckError`` — it must never leak a raw
+# ``OSError`` into the policy path (where a caller might not read it as a
+# refusal) and must never be mistaken for a passing recheck.
+# ---------------------------------------------------------------------------
+
+
+def test_osfsview_node_ids_raises_recheck_error_when_the_node_is_unlinked(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "f"
+    target.write_text("x", encoding="utf-8")
+    view = OsFsView()
+    before = view.node_ids(str(target))  # baseline: the happy path really works
+    assert before == (os.stat(target).st_dev, os.stat(target).st_ino)
+
+    target.unlink()  # the racing unlink
+
+    with pytest.raises(RecheckError) as excinfo:
+        view.node_ids(str(target))
+    assert "node stat failed" in str(excinfo.value)
+    assert str(target) in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, OSError)
+
+
+def test_osfsview_parent_ids_raises_recheck_error_when_the_parent_is_unlinked(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "d"
+    parent.mkdir()
+    target = parent / "f"
+    target.write_text("x", encoding="utf-8")
+    view = OsFsView()
+    before = view.parent_ids(str(target))  # baseline: the happy path really works
+    assert before == (os.stat(parent).st_dev, os.stat(parent).st_ino)
+
+    target.unlink()
+    parent.rmdir()  # the racing unlink of the PARENT
+
+    with pytest.raises(RecheckError) as excinfo:
+        view.parent_ids(str(target))
+    assert "parent stat failed" in str(excinfo.value)
+    assert str(target) in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, OSError)
+
+
+def test_snapshot_paths_over_the_real_boundary_fails_closed_on_a_racing_unlink(
+    tmp_path: Path,
+) -> None:
+    """The typed failure PROPAGATES: a path that vanishes between approval and
+    §7.5 step 2 aborts ``snapshot_paths`` instead of yielding a snapshot."""
+    target = tmp_path / "f"
+    target.write_text("x", encoding="utf-8")
+    assert snapshot_paths([str(target)], OsFsView())  # baseline: snapshots fine
+
+    target.unlink()
+
+    with pytest.raises(RecheckError):
+        snapshot_paths([str(target)], OsFsView())
+
+
+def test_snapshot_paths_over_the_real_boundary_fails_closed_when_parent_vanishes(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "d"
+    parent.mkdir()
+    target = parent / "f"
+    target.write_text("x", encoding="utf-8")
+    assert snapshot_paths([str(target)], OsFsView())  # baseline: snapshots fine
+
+    target.unlink()
+    parent.rmdir()
+
+    with pytest.raises(RecheckError):
+        snapshot_paths([str(target)], OsFsView())

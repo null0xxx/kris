@@ -1481,6 +1481,62 @@ def test_outgoing_rule_from_a_terminal_state_fails_the_import_time_check(
         machine._validate_execute_gate()
 
 
+def _silent_absorbing_row(target: State, side_effect: tuple[str, ...]) -> machine.TransitionRule:
+    """A row into an ABSORBING terminal state, with a controllable obligation set.
+
+    ``source`` is deliberately a NON-terminal state so the preceding
+    "terminal pseudo-states must be absorbing" check passes and the N2
+    verdict-obligation check is the one under test.
+    """
+    return machine.TransitionRule(
+        source=State.POLICY_CHECK,
+        event=Event.POLICY_CLASSIFIED,
+        target=target,
+        guard=lambda _inp: True,
+        side_effect=side_effect,
+    )
+
+
+@pytest.mark.parametrize("target", (State.BLOCKED, State.CANCELLED), ids=str)
+def test_absorbing_row_without_a_verdict_obligation_fails_the_import_time_check(
+    target: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N2 NEGATIVE CONTROL: a row into an ABSORBING terminal state that does NOT
+    carry ``compute:verdict`` is rejected AT IMPORT.
+
+    A row into BLOCKED/CANCELLED is the last thing that happens to that turn —
+    nothing follows it, so if it does not carry the verdict obligation, nothing
+    ever will and the turn ends silently. The validator must refuse the table
+    rather than let a silent-termination row ship."""
+    silent = _silent_absorbing_row(target, ("audit:policy_decision",))
+    monkeypatch.setattr(machine, "TRANSITION_TABLE", (*TRANSITION_TABLE, silent), raising=True)
+    with pytest.raises(MachineTableError, match="terminates without a compute:verdict"):
+        machine._validate_execute_gate()
+    # The message must NAME the offending edge, or a reviewer cannot find it.
+    with pytest.raises(MachineTableError, match=f"{State.POLICY_CHECK}->{target}"):
+        machine._validate_execute_gate()
+
+
+@pytest.mark.parametrize("target", (State.BLOCKED, State.CANCELLED), ids=str)
+def test_absorbing_row_carrying_the_verdict_obligation_is_accepted(
+    target: State, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POSITIVE CONTROL for the check above: the SAME row passes once it carries
+    ``compute:verdict`` — so the negative case is pinned to the obligation and
+    not merely to "an extra row was added"."""
+    obliged = _silent_absorbing_row(target, ("audit:policy_decision", "compute:verdict"))
+    monkeypatch.setattr(machine, "TRANSITION_TABLE", (*TRANSITION_TABLE, obliged), raising=True)
+    machine._validate_execute_gate()  # must not raise
+
+
+def test_every_shipped_absorbing_row_carries_the_verdict_obligation() -> None:
+    """The REAL table satisfies N2 — the property the validator enforces."""
+    absorbing = [r for r in TRANSITION_TABLE if r.target in {State.BLOCKED, State.CANCELLED}]
+    assert absorbing, "expected the shipped table to have rows into a terminal state"
+    for rule in absorbing:
+        assert "compute:verdict" in rule.side_effect, rule
+
+
 @pytest.mark.parametrize("policy_class", (C1, CE, DENY))
 def test_non_auto_class_never_goes_straight_to_execute(policy_class: PermissionClass) -> None:
     transition = step(State.POLICY_CHECK, Event.POLICY_CLASSIFIED, _policy_check(policy_class))

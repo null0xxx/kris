@@ -10,7 +10,10 @@ symlinks:
   parent;
 - a missing INTERIOR component still fails even with ``allow_missing``;
 - ``..`` traversal collapses; a non-absolute input raises; a non-directory
-  parent (ENOTDIR) fails closed;
+  parent (ENOTDIR) fails closed; an ``OSError`` raised by ``realpath`` ITSELF is
+  wrapped as the typed ``CanonicalizationError`` (injected — see that test's
+  docstring for why that arm is not reachable from a real filesystem state, and
+  why it is covered by a real assertion rather than a ``# pragma: no cover``);
 - ``env_digest`` is order-independent + value-sensitive;
 - ``action_hash`` is deterministic, key-order independent, and changes when ANY
   binding field changes (the §7.4 token binding reused verbatim by T2.03).
@@ -18,6 +21,7 @@ symlinks:
 
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 
@@ -108,6 +112,54 @@ def test_canonicalize_notadir_parent_fails_closed(tmp_path: Path) -> None:
     afile.write_text("x", encoding="utf-8")
     with pytest.raises(CanonicalizationError):
         canonicalize(str(afile / "child"), allow_missing=True)
+
+
+def test_canonicalize_wraps_a_realpath_oserror_as_the_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-closed defense in depth (§7.5 step 1, S2): if ``os.path.realpath``
+    ITSELF raises an ``OSError``, ``canonicalize`` must convert it into the TYPED
+    :class:`CanonicalizationError` (with the original chained as ``__cause__``)
+    and must never let a raw ``OSError`` escape into the policy path, where a
+    caller catching only ``CanonicalizationError`` would fail OPEN.
+
+    INJECTED, NOT PROVOKED — and this is deliberate. CPython's NON-strict
+    ``posixpath.realpath`` swallows per-component ``OSError``\\ s internally, and
+    the absolute-input precondition above it removes the ``os.getcwd()`` path
+    that could raise, so on CPython/Linux no ordinary filesystem state reaches
+    this arm. The guard is there for the implementations/platforms where it can
+    (and so a future strict-realpath change cannot silently turn a refusal into
+    a crash), so the only honest way to pin its behaviour is to make realpath
+    raise. It is covered by a REAL assertion on the resulting error, not by a
+    ``# pragma: no cover``.
+    """
+
+    def _boom(_path: str) -> str:
+        raise OSError(errno.ELOOP, "Too many levels of symbolic links")
+
+    monkeypatch.setattr(os.path, "realpath", _boom)
+
+    with pytest.raises(CanonicalizationError) as excinfo:
+        canonicalize("/ws/project/file.txt")
+    assert "realpath failed" in str(excinfo.value)
+    assert "/ws/project/file.txt" in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, OSError)
+    assert excinfo.value.__cause__.errno == errno.ELOOP
+
+
+def test_canonicalize_checks_absoluteness_before_touching_realpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ORDERING control for the test above: the non-absolute refusal happens
+    BEFORE any filesystem call, so a broken realpath cannot change that answer."""
+
+    def _boom(_path: str) -> str:  # must never be reached
+        raise AssertionError("realpath must not be called for a non-absolute path")
+
+    monkeypatch.setattr(os.path, "realpath", _boom)
+
+    with pytest.raises(CanonicalizationError, match="must be absolute"):
+        canonicalize("relative/path")
 
 
 # ---------------------------------------------------------------------------

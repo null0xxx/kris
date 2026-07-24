@@ -70,7 +70,7 @@ def canonicalize(path: str, *, allow_missing: bool = False) -> CanonicalPath:
 
     try:
         real = os.path.realpath(path)
-    except OSError as exc:  # pragma: no cover - realpath rarely raises non-strict
+    except OSError as exc:  # defense in depth (S2) — see the test that injects it
         raise CanonicalizationError(f"realpath failed for {path!r}: {exc}") from exc
 
     segments = [seg for seg in real.split("/") if seg]

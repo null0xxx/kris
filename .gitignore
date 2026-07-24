@@ -15,6 +15,11 @@ venv/
 .ruff_cache/
 .hypothesis/
 
+# Branch-coverage measurement data (T2.13 / ADR-011). `coverage run` drops
+# `.coverage` in the repo root; `--parallel-mode` adds `.coverage.<host>.<pid>.<n>`.
+.coverage
+.coverage.*
+
 # Secrets — never commit (SPEC §13 / I8)
 *.key
 *.pem
