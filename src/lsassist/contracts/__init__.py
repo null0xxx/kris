@@ -1,5 +1,7 @@
 """contracts/ — shared pydantic contract models (SPEC §4.4-§4.6, §5, §6.2, §6.5)."""
 
+from lsassist.contracts.approval import ApprovalClass, ApprovalRecord
+from lsassist.contracts.budget import BudgetState
 from lsassist.contracts.enums import (
     BUDGET_KINDS,
     PROVIDER_IDS,
@@ -33,6 +35,9 @@ from lsassist.contracts.verdict import Evidence, Verdict
 __all__ = [
     "BUDGET_KINDS",
     "PROVIDER_IDS",
+    "ApprovalClass",
+    "ApprovalRecord",
+    "BudgetState",
     "Capabilities",
     "Concurrency",
     "Evidence",
