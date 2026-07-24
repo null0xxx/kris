@@ -1,0 +1,229 @@
+{
+  "$defs": {
+    "Capabilities": {
+      "description": "\u00a76.2 capabilities object \u2014 all three dimensions required.",
+      "properties": {
+        "fs": {
+          "$ref": "#/$defs/FsCapability"
+        },
+        "net": {
+          "$ref": "#/$defs/NetCapability"
+        },
+        "proc": {
+          "$ref": "#/$defs/ProcCapability"
+        }
+      },
+      "required": [
+        "fs",
+        "net",
+        "proc"
+      ],
+      "title": "Capabilities",
+      "type": "object"
+    },
+    "Concurrency": {
+      "description": "\u00a76.2 concurrency enum.",
+      "enum": [
+        "exclusive",
+        "shared_read",
+        "unrestricted"
+      ],
+      "title": "Concurrency",
+      "type": "string"
+    },
+    "FsCapability": {
+      "description": "\u00a76.2 capabilities.fs enum.",
+      "enum": [
+        "none",
+        "read_scoped",
+        "write_scoped"
+      ],
+      "title": "FsCapability",
+      "type": "string"
+    },
+    "NetCapability": {
+      "description": "\u00a76.2 capabilities.net enum.",
+      "enum": [
+        "none",
+        "fetch_allowlist"
+      ],
+      "title": "NetCapability",
+      "type": "string"
+    },
+    "OutputLimits": {
+      "description": "\u00a76.2 output_limits object \u2014 kernel-enforced per-tool ceilings.",
+      "properties": {
+        "max_result_chars": {
+          "maximum": 200000,
+          "title": "Max Result Chars",
+          "type": "integer"
+        },
+        "max_stderr_bytes": {
+          "maximum": 262144,
+          "title": "Max Stderr Bytes",
+          "type": "integer"
+        },
+        "max_stdout_bytes": {
+          "maximum": 1048576,
+          "title": "Max Stdout Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_stdout_bytes",
+        "max_stderr_bytes",
+        "max_result_chars"
+      ],
+      "title": "OutputLimits",
+      "type": "object"
+    },
+    "PathScope": {
+      "description": "\u00a76.2 path_scope enum (ordered most \u2192 least restrictive by declaration).",
+      "enum": [
+        "workspace",
+        "system_read",
+        "config_own",
+        "any_read"
+      ],
+      "title": "PathScope",
+      "type": "string"
+    },
+    "PermissionClass": {
+      "description": "Tool permission classes (SPEC \u00a76.2 tool manifest enum).",
+      "enum": [
+        "AUTO_READ",
+        "AUTO_SCOPED_WRITE",
+        "CONFIRM_ONCE",
+        "CONFIRM_EXACT",
+        "DENY_ALWAYS"
+      ],
+      "title": "PermissionClass",
+      "type": "string"
+    },
+    "ProcCapability": {
+      "description": "\u00a76.2 capabilities.proc enum.",
+      "enum": [
+        "none",
+        "spawn_argv"
+      ],
+      "title": "ProcCapability",
+      "type": "string"
+    },
+    "Redaction": {
+      "description": "\u00a76.2 redaction item enum.",
+      "enum": [
+        "paths",
+        "secrets",
+        "env",
+        "full_body"
+      ],
+      "title": "Redaction",
+      "type": "string"
+    },
+    "Rollback": {
+      "description": "\u00a76.2 rollback enum.",
+      "enum": [
+        "none",
+        "checkpoint",
+        "manual_steps"
+      ],
+      "title": "Rollback",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Tool manifest per SPEC \u00a76.2 \u2014 root object, additionalProperties: false.",
+  "properties": {
+    "capabilities": {
+      "$ref": "#/$defs/Capabilities"
+    },
+    "concurrency": {
+      "$ref": "#/$defs/Concurrency"
+    },
+    "dry_run": {
+      "title": "Dry Run",
+      "type": "boolean"
+    },
+    "idempotent": {
+      "title": "Idempotent",
+      "type": "boolean"
+    },
+    "input_schema": {
+      "additionalProperties": true,
+      "title": "Input Schema",
+      "type": "object"
+    },
+    "name": {
+      "pattern": "^[a-z][a-z0-9_.]{1,31}$",
+      "title": "Name",
+      "type": "string"
+    },
+    "output_limits": {
+      "$ref": "#/$defs/OutputLimits"
+    },
+    "output_schema": {
+      "additionalProperties": true,
+      "title": "Output Schema",
+      "type": "object"
+    },
+    "path_scope": {
+      "$ref": "#/$defs/PathScope",
+      "default": "workspace"
+    },
+    "permission_class": {
+      "$ref": "#/$defs/PermissionClass"
+    },
+    "purpose": {
+      "maxLength": 300,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "redaction": {
+      "items": {
+        "$ref": "#/$defs/Redaction"
+      },
+      "title": "Redaction",
+      "type": "array"
+    },
+    "rollback": {
+      "$ref": "#/$defs/Rollback"
+    },
+    "tests": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tests",
+      "type": "array"
+    },
+    "timeout_s": {
+      "maximum": 1800,
+      "minimum": 1,
+      "title": "Timeout S",
+      "type": "integer"
+    },
+    "version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "version",
+    "purpose",
+    "input_schema",
+    "output_schema",
+    "permission_class",
+    "capabilities",
+    "timeout_s",
+    "output_limits",
+    "concurrency",
+    "idempotent",
+    "dry_run",
+    "rollback",
+    "redaction",
+    "tests"
+  ],
+  "title": "ToolManifest",
+  "type": "object"
+}
