@@ -15,11 +15,16 @@ import OR at classify time. The XDG-configurable store trees (audit / policy /
 kernel secret) and the home anchor are INJECTED via
 :class:`~lsassist.policy.stores.PolicyStores`, which the dispatcher resolves
 from ``XdgPaths``; this layer only does pure, segment-aware string comparison.
-Path checks operate on the ALREADY-canonicalized absolute path the dispatcher
-produced (HARDEN-02, §6.3 step 2 / §7.5); as defense-in-depth the deny
-matchers ALSO apply ``os.path.normpath`` (a pure string collapse of ``..`` /
-``.`` / ``//``) so a ``..``-bearing spelling of a secret path still resolves and
-is denied. Symlink resolution remains the dispatcher's job (correct layering).
+The §7.3 DENY_ALWAYS decision is DELEGATED to the single-authority pure matcher
+:func:`lsassist.policy.denylist.deny_match` (T2.02), which accepts only a
+:data:`~lsassist.policy.canonical.CanonicalPath`. Path checks operate on the
+ALREADY-canonicalized absolute path the dispatcher produced (HARDEN-02, §6.3
+step 2 / §7.5); as defense-in-depth R2/R7 ALSO apply ``os.path.normpath`` (a
+pure string collapse of ``..`` / ``.`` / ``//``) before wrapping the path as a
+``CanonicalPath`` at the rules boundary, so a ``..``-bearing spelling of a
+secret path still resolves and is denied. ``classify`` STAYS PURE — it never
+calls :func:`lsassist.policy.canonical.canonicalize` (I/O); actual symlink
+resolution is the dispatcher's job (correct layering, HARDEN-02).
 
 Conventional ``request.args`` keys inspected (the 12 tool manifests / exact arg
 schemas land in later tasks; missing/mistyped keys → rule returns None, never
@@ -40,7 +45,9 @@ from lsassist.contracts.enums import PermissionClass
 from lsassist.contracts.manifest import ToolManifest
 from lsassist.contracts.policy_context import PolicyContext
 from lsassist.contracts.tool_request import ToolRequest
+from lsassist.policy.canonical import CanonicalPath
 from lsassist.policy.classes import raise_to, rank
+from lsassist.policy.denylist import deny_match
 from lsassist.policy.stores import PolicyStores
 
 _AR = PermissionClass.AUTO_READ
@@ -63,70 +70,6 @@ def _within(path_segs: list[str], root_segs: list[str]) -> bool:
     Segment-aware (NOT naive ``startswith``): ``/ws-evil`` is NOT within ``/ws``.
     """
     return len(path_segs) >= len(root_segs) and path_segs[: len(root_segs)] == root_segs
-
-
-# Fixed OS secret subtrees under the home anchor (NOT XDG-relocatable). The
-# XDG-configurable stores (audit/policy/kernel secret) come from PolicyStores.
-_HOME_SECRET_RELS: tuple[str, ...] = (".ssh", ".gnupg", ".kimi-code", ".aws", ".config/gh")
-
-
-def _matches_r2_deny(path: str, stores: PolicyStores) -> bool:
-    """§7.3 secret/device paths whose mere ACCESS is denied (read OR write; I8).
-
-    ``path`` is normalized first (S4 defense-in-depth) via :func:`_segments`.
-    """
-    segs = _segments(path)
-    if not segs:
-        return False
-    base = segs[-1]
-    # ~/.ssh/**, ~/.gnupg/**, ~/.kimi-code/**, ~/.aws/**, ~/.config/gh/**
-    for rel in _HOME_SECRET_RELS:
-        if _within(segs, _segments(os.path.join(stores.home, rel))):
-            return True
-    # **/.env  and  **/.env.*  (except the .env.example carve-out)
-    if base == ".env":
-        return True
-    if base.startswith(".env.") and base != ".env.example":
-        return True
-    # /etc/shadow ; /etc/sudoers*  (sudoers, sudoers.d/…)
-    if len(segs) >= 2 and segs[0] == "etc" and (
-        segs[1] == "shadow" or segs[1].startswith("sudoers")
-    ):
-        return True
-    # raw block devices: /dev/sd* , /dev/nvme*n*
-    if len(segs) >= 2 and segs[0] == "dev":
-        dev = segs[1]
-        if dev.startswith("sd"):
-            return True
-        if dev.startswith("nvme") and "n" in dev[len("nvme"):]:
-            return True
-    return False
-
-
-def _matches_r7_deny(path: str, stores: PolicyStores) -> bool:
-    """§7.2 R7: self-approval / policy-tamper stores (.git internals, policy*,
-    audit, kernel secret) — INJECTED so an ``$XDG_*`` override cannot slip them
-    past. Denied for BOTH read and write: reading the HMAC ``kernel.secret`` is
-    credential theft (I8), a harden over the SPEC's "write to …" wording.
-
-    ``path`` is normalized first (S4 defense-in-depth) via :func:`_segments`.
-    """
-    segs = _segments(path)
-    if not segs:
-        return False
-    # .git/ internals — any component named exactly ".git" (NOT ".gitignore"/".github").
-    if ".git" in segs:
-        return True
-    # <policy_store>/policy*  — an entry under the policy store named policy*.
-    policy_segs = _segments(stores.policy_store)
-    if _within(segs, policy_segs):
-        tail = segs[len(policy_segs):]
-        if tail and tail[0].startswith("policy"):
-            return True
-    # audit store subtree; kernel secret (file/subtree).
-    return _within(segs, _segments(stores.audit_store)) or _within(
-        segs, _segments(stores.kernel_secret)
-    )
 
 
 # --- R5 exec allow/deny tables + wrapper peeling + git destructive detection ---
@@ -243,9 +186,9 @@ def r2(
     raw = request.args.get("path")
     if not isinstance(raw, str) or not raw:
         return None
-    if _matches_r2_deny(raw, stores):  # read OR write of a secret/device path (I8)
+    path = os.path.normpath(raw)  # S4: collapse .. before matching + workspace check
+    if deny_match(CanonicalPath(path), stores):  # read OR write of a §7.3 path (I8)
         return _DENY
-    path = os.path.normpath(raw)  # S4: collapse .. before the workspace check
     if (
         request.tool in _WRITE_INTENT_TOOLS
         and path.startswith("/")
@@ -337,7 +280,8 @@ def r7(
     raw = request.args.get("path")
     if not isinstance(raw, str) or not raw:
         return None
-    return _DENY if _matches_r7_deny(raw, stores) else None
+    # S4 defense-in-depth: normpath collapses .. before the boundary CanonicalPath cast.
+    return _DENY if deny_match(CanonicalPath(os.path.normpath(raw)), stores) else None
 
 
 def r8(
