@@ -1,0 +1,368 @@
+{
+  "nodes": {
+    "node-01-foundation": {
+      "kind": "LEAF",
+      "depth": 1,
+      "deps": [],
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/01-foundation.md"
+      ],
+      "success_criteria_subset": [
+        "K1: plan \u10d8\u10ec\u10e7\u10d4\u10d1\u10d0 Gate 0-style read-only environment verification task-\u10d8\u10d7 \u10d3\u10d0 bootstrap task-\u10d8\u10d7 (venv + pip --require-hashes, ADR-005)",
+        "K2: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 contracts/ \u10d3\u10d0 config/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "children": [
+        "node-01-foundation.1"
+      ]
+    },
+    "node-02-core-tcb": {
+      "kind": "LEAF",
+      "depth": 1,
+      "deps": [],
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/02-core.md"
+      ],
+      "success_criteria_subset": [
+        "K3: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 kernel/, policy/ \u10d3\u10d0 sandbox/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1 TCB LOC checkpoint-\u10d4\u10d1\u10d8\u10d7"
+      ],
+      "children": [
+        "node-02-core-tcb.2"
+      ]
+    },
+    "node-03-tools-providers": {
+      "kind": "LEAF",
+      "depth": 1,
+      "deps": [],
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/03-tools-providers.md"
+      ],
+      "success_criteria_subset": [
+        "K4: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 tools/ (SPEC \u00a76.4-\u10d8\u10e1 12 tool) \u10d3\u10d0 providers/ (kimi-coding, ollama-local) test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "children": [
+        "node-03-tools-providers.3"
+      ]
+    },
+    "node-04-data": {
+      "kind": "LEAF",
+      "depth": 1,
+      "deps": [],
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/04-data.md"
+      ],
+      "success_criteria_subset": [
+        "K5: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 memory/, skills/, audit/ \u10d3\u10d0 recovery/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "children": [
+        "node-04-data.4"
+      ]
+    },
+    "node-05-modes-cli": {
+      "kind": "LEAF",
+      "depth": 1,
+      "deps": [],
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/05-modes-cli.md"
+      ],
+      "success_criteria_subset": [
+        "K6: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 cli/, tutor/ \u10d3\u10d0 coding/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "children": [
+        "node-05-modes-cli.5"
+      ]
+    },
+    "node-06-testing-gates": {
+      "kind": "LEAF",
+      "depth": 1,
+      "deps": [],
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/06-testing-gates.md"
+      ],
+      "success_criteria_subset": [
+        "K7: \u10e7\u10dd\u10d5\u10d4\u10da\u10d8 AC-01..AC-20 \u10db\u10d8\u10dc\u10d8\u10db\u10e3\u10db \u10d4\u10e0\u10d7 verifying task-\u10d6\u10d4\u10d0 mapped; test layers (UT/PT/CT/IT/RT/EV/LT) \u10d3\u10d0 CI gates \u10d2\u10d0\u10dc\u10e1\u10d0\u10d6\u10e6\u10d5\u10e0\u10e3\u10da\u10d8\u10d0",
+        "K8: plan \u10db\u10d7\u10d0\u10d5\u10e0\u10d3\u10d4\u10d1\u10d0 Gate 4 entry criteria-\u10d8\u10d7 \u10d3\u10d0 stop conditions-\u10d8\u10d7 (SPEC \u00a725.2)"
+      ],
+      "children": [
+        "node-06-testing-gates.6"
+      ]
+    },
+    "node-01-foundation.1": {
+      "kind": "LEAF",
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/01-foundation.md"
+      ],
+      "success_criteria_subset": [
+        "K1: plan \u10d8\u10ec\u10e7\u10d4\u10d1\u10d0 Gate 0-style read-only environment verification task-\u10d8\u10d7 \u10d3\u10d0 bootstrap task-\u10d8\u10d7 (venv + pip --require-hashes, ADR-005)",
+        "K2: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 contracts/ \u10d3\u10d0 config/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "verify_cmd": "",
+      "refine_of": "node-01-foundation",
+      "depth": 2,
+      "parent": "node-01-foundation",
+      "deps": [],
+      "children": []
+    },
+    "node-02-core-tcb.2": {
+      "kind": "LEAF",
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/02-core.md"
+      ],
+      "success_criteria_subset": [
+        "K3: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 kernel/, policy/ \u10d3\u10d0 sandbox/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1 TCB LOC checkpoint-\u10d4\u10d1\u10d8\u10d7"
+      ],
+      "verify_cmd": "",
+      "refine_of": "node-02-core-tcb",
+      "depth": 2,
+      "parent": "node-02-core-tcb",
+      "deps": [],
+      "children": []
+    },
+    "node-03-tools-providers.3": {
+      "kind": "LEAF",
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/03-tools-providers.md"
+      ],
+      "success_criteria_subset": [
+        "K4: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 tools/ (SPEC \u00a76.4-\u10d8\u10e1 12 tool) \u10d3\u10d0 providers/ (kimi-coding, ollama-local) test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "verify_cmd": "",
+      "refine_of": "node-03-tools-providers",
+      "depth": 2,
+      "parent": "node-03-tools-providers",
+      "deps": [],
+      "children": []
+    },
+    "node-04-data.4": {
+      "kind": "LEAF",
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/04-data.md"
+      ],
+      "success_criteria_subset": [
+        "K5: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 memory/, skills/, audit/ \u10d3\u10d0 recovery/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "verify_cmd": "",
+      "refine_of": "node-04-data",
+      "depth": 2,
+      "parent": "node-04-data",
+      "deps": [],
+      "children": []
+    },
+    "node-05-modes-cli.5": {
+      "kind": "LEAF",
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/05-modes-cli.md"
+      ],
+      "success_criteria_subset": [
+        "K6: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 cli/, tutor/ \u10d3\u10d0 coding/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1"
+      ],
+      "verify_cmd": "",
+      "refine_of": "node-05-modes-cli",
+      "depth": 2,
+      "parent": "node-05-modes-cli",
+      "deps": [],
+      "children": []
+    },
+    "node-06-testing-gates.6": {
+      "kind": "LEAF",
+      "scope_paths": [
+        ".atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/fragments/06-testing-gates.md"
+      ],
+      "success_criteria_subset": [
+        "K7: \u10e7\u10dd\u10d5\u10d4\u10da\u10d8 AC-01..AC-20 \u10db\u10d8\u10dc\u10d8\u10db\u10e3\u10db \u10d4\u10e0\u10d7 verifying task-\u10d6\u10d4\u10d0 mapped; test layers (UT/PT/CT/IT/RT/EV/LT) \u10d3\u10d0 CI gates \u10d2\u10d0\u10dc\u10e1\u10d0\u10d6\u10e6\u10d5\u10e0\u10e3\u10da\u10d8\u10d0",
+        "K8: plan \u10db\u10d7\u10d0\u10d5\u10e0\u10d3\u10d4\u10d1\u10d0 Gate 4 entry criteria-\u10d8\u10d7 \u10d3\u10d0 stop conditions-\u10d8\u10d7 (SPEC \u00a725.2)"
+      ],
+      "verify_cmd": "",
+      "refine_of": "node-06-testing-gates",
+      "depth": 2,
+      "parent": "node-06-testing-gates",
+      "deps": [],
+      "children": []
+    }
+  },
+  "risk_features": {
+    "node-01-foundation": {
+      "archetype": "feature",
+      "scope_loc": 140,
+      "criteria_count": 2,
+      "has_existing_tests": false
+    },
+    "node-02-core-tcb": {
+      "archetype": "security",
+      "scope_loc": 160,
+      "criteria_count": 1,
+      "has_existing_tests": false
+    },
+    "node-03-tools-providers": {
+      "archetype": "feature",
+      "scope_loc": 180,
+      "criteria_count": 1,
+      "has_existing_tests": false
+    },
+    "node-04-data": {
+      "archetype": "feature",
+      "scope_loc": 160,
+      "criteria_count": 1,
+      "has_existing_tests": false
+    },
+    "node-05-modes-cli": {
+      "archetype": "feature",
+      "scope_loc": 140,
+      "criteria_count": 1,
+      "has_existing_tests": false
+    },
+    "node-06-testing-gates": {
+      "archetype": "test",
+      "scope_loc": 150,
+      "criteria_count": 2,
+      "has_existing_tests": false
+    }
+  },
+  "meta": {
+    "depth_max": 4,
+    "node_max": 12,
+    "gas_remaining": 24,
+    "next_seq": 6,
+    "caps": {
+      "depth_max": 4,
+      "node_max": 12,
+      "gas": 36,
+      "token_budget": 100000
+    },
+    "risk_features": {
+      "node-01-foundation": {
+        "archetype": "feature",
+        "scope_loc": 140,
+        "criteria_count": 2,
+        "has_existing_tests": false
+      },
+      "node-02-core-tcb": {
+        "archetype": "security",
+        "scope_loc": 160,
+        "criteria_count": 1,
+        "has_existing_tests": false
+      },
+      "node-03-tools-providers": {
+        "archetype": "feature",
+        "scope_loc": 180,
+        "criteria_count": 1,
+        "has_existing_tests": false
+      },
+      "node-04-data": {
+        "archetype": "feature",
+        "scope_loc": 160,
+        "criteria_count": 1,
+        "has_existing_tests": false
+      },
+      "node-05-modes-cli": {
+        "archetype": "feature",
+        "scope_loc": 140,
+        "criteria_count": 1,
+        "has_existing_tests": false
+      },
+      "node-06-testing-gates": {
+        "archetype": "test",
+        "scope_loc": 150,
+        "criteria_count": 2,
+        "has_existing_tests": false
+      }
+    }
+  },
+  "jobs": [
+    {
+      "job_id": "node-01-foundation#0",
+      "node_id": "node-01-foundation",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-02-core-tcb#0",
+      "node_id": "node-02-core-tcb",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-03-tools-providers#0",
+      "node_id": "node-03-tools-providers",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-04-data#0",
+      "node_id": "node-04-data",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-05-modes-cli#0",
+      "node_id": "node-05-modes-cli",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-06-testing-gates#0",
+      "node_id": "node-06-testing-gates",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-01-foundation.1#0",
+      "node_id": "node-01-foundation.1",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-02-core-tcb.2#0",
+      "node_id": "node-02-core-tcb.2",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-03-tools-providers.3#0",
+      "node_id": "node-03-tools-providers.3",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-04-data.4#0",
+      "node_id": "node-04-data.4",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-05-modes-cli.5#0",
+      "node_id": "node-05-modes-cli.5",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    },
+    {
+      "job_id": "node-06-testing-gates.6#0",
+      "node_id": "node-06-testing-gates.6",
+      "kind": "LEAF",
+      "deps": [],
+      "attempts": 0,
+      "state": "DONE"
+    }
+  ]
+}

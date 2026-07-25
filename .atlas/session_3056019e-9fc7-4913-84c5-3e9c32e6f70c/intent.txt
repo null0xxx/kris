@@ -1,0 +1,1 @@
+Gate 3 — LinuxSec Assistant-ის Implementation Plan-ის შექმნა. Deliverable = IMPLEMENTATION_PLAN.md (ცალკე დოკუმენტი) აგებული დამტკიცებული SPEC.md-დან. Plan = მცირე, თანმიმდევრული, test-first task-ები; თითო task-ზე: exact scope, files, commands, expected results, verification, review checkpoint, rollback. Production code Gate 3-ში არ იწერება.

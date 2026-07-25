@@ -1,0 +1,12 @@
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "DECOMPOSED", "ts": "2026-07-24T04:01:28Z", "nodes": 6}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "BUDGETED", "ts": "2026-07-24T04:01:28Z"}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "SCHEDULE", "ts": "2026-07-24T04:02:04Z", "wave": 1}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "SCHEDULE", "ts": "2026-07-24T04:18:18Z", "wave": 2}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "SCHEDULE", "ts": "2026-07-24T04:33:14Z", "wave": 3}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "INTEGRATE", "ts": "2026-07-24T04:47:14Z"}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "SCHEDULE", "ts": "2026-07-24T05:02:46Z", "wave": 4}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "SCHEDULE", "ts": "2026-07-24T05:22:56Z", "wave": 5}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "SCHEDULE", "ts": "2026-07-24T05:37:40Z", "wave": 6}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "INTEGRATE", "ts": "2026-07-24T05:53:45Z", "note": "re-integration after refine"}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "AGGREGATE", "ts": "2026-07-24T06:14:01Z", "verdict": "OK"}
+{"run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c", "stage": "OUTPUT", "ts": "2026-07-24T06:14:24Z"}

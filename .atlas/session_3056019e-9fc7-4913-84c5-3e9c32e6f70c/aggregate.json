@@ -1,0 +1,16 @@
+{
+  "aggregate": {
+    "dimensions": {
+      "CORRECTNESS": "no",
+      "CODE-QUALITY": "yes",
+      "SECURITY": "yes",
+      "TEST-ADEQUACY": "yes",
+      "DOES-IT-RUN": "yes",
+      "REQUIREMENTS-COVERAGE": "yes"
+    },
+    "defects": [],
+    "verdict": "OK"
+  },
+  "run_status": "OK",
+  "integration_note": "seam critic pass1: 17 defects (S1-S17) -> refine waves A-C; pass2: all FIXED, R1-R8 -> orchestrator fixes; verify_plan.py: 70 tasks, 0 fails"
+}

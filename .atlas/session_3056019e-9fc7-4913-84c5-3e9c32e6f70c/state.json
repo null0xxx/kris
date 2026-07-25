@@ -1,0 +1,50 @@
+{
+  "run_id": "session_3056019e-9fc7-4913-84c5-3e9c32e6f70c",
+  "created_ts": "2026-07-24T03:57:12Z",
+  "updated_ts": "2026-07-24T06:14:24Z",
+  "current_state": "OUTPUT",
+  "intent": "Gate 3 \u2014 LinuxSec Assistant-\u10d8\u10e1 Implementation Plan-\u10d8\u10e1 \u10e8\u10d4\u10e5\u10db\u10dc\u10d0. Deliverable = IMPLEMENTATION_PLAN.md (\u10ea\u10d0\u10da\u10d9\u10d4 \u10d3\u10dd\u10d9\u10e3\u10db\u10d4\u10dc\u10e2\u10d8) \u10d0\u10d2\u10d4\u10d1\u10e3\u10da\u10d8 \u10d3\u10d0\u10db\u10e2\u10d9\u10d8\u10ea\u10d4\u10d1\u10e3\u10da\u10d8 SPEC.md-\u10d3\u10d0\u10dc. Plan = \u10db\u10ea\u10d8\u10e0\u10d4, \u10d7\u10d0\u10dc\u10db\u10d8\u10db\u10d3\u10d4\u10d5\u10e0\u10e3\u10da\u10d8, test-first task-\u10d4\u10d1\u10d8; \u10d7\u10d8\u10d7\u10dd task-\u10d6\u10d4: exact scope, files, commands, expected results, verification, review checkpoint, rollback. Production code Gate 3-\u10e8\u10d8 \u10d0\u10e0 \u10d8\u10ec\u10d4\u10e0\u10d4\u10d1\u10d0.",
+  "success_criteria": [
+    "K1: plan \u10d8\u10ec\u10e7\u10d4\u10d1\u10d0 Gate 0-style read-only environment verification task-\u10d8\u10d7 \u10d3\u10d0 bootstrap task-\u10d8\u10d7 (venv + pip --require-hashes, ADR-005)",
+    "K2: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 contracts/ \u10d3\u10d0 config/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1",
+    "K3: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 kernel/, policy/ \u10d3\u10d0 sandbox/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1 TCB LOC checkpoint-\u10d4\u10d1\u10d8\u10d7",
+    "K4: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 tools/ (SPEC \u00a76.4-\u10d8\u10e1 12 tool) \u10d3\u10d0 providers/ (kimi-coding, ollama-local) test-first task-\u10d4\u10d1\u10e1",
+    "K5: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 memory/, skills/, audit/ \u10d3\u10d0 recovery/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1",
+    "K6: plan \u10e8\u10d4\u10d8\u10ea\u10d0\u10d5\u10e1 cli/, tutor/ \u10d3\u10d0 coding/ \u10de\u10d0\u10d9\u10d4\u10e2\u10d4\u10d1\u10d8\u10e1 test-first task-\u10d4\u10d1\u10e1",
+    "K7: \u10e7\u10dd\u10d5\u10d4\u10da\u10d8 AC-01..AC-20 \u10db\u10d8\u10dc\u10d8\u10db\u10e3\u10db \u10d4\u10e0\u10d7 verifying task-\u10d6\u10d4\u10d0 mapped; test layers (UT/PT/CT/IT/RT/EV/LT) \u10d3\u10d0 CI gates \u10d2\u10d0\u10dc\u10e1\u10d0\u10d6\u10e6\u10d5\u10e0\u10e3\u10da\u10d8\u10d0",
+    "K8: plan \u10db\u10d7\u10d0\u10d5\u10e0\u10d3\u10d4\u10d1\u10d0 Gate 4 entry criteria-\u10d8\u10d7 \u10d3\u10d0 stop conditions-\u10d8\u10d7 (SPEC \u00a725.2)"
+  ],
+  "stages": {
+    "DECOMPOSED": {
+      "status": "done",
+      "ts": "2026-07-24T04:01:28Z"
+    },
+    "BUDGETED": {
+      "status": "done",
+      "ts": "2026-07-24T04:01:28Z"
+    },
+    "SCHEDULE": {
+      "status": "done",
+      "ts": "2026-07-24T05:37:40Z"
+    },
+    "INTEGRATE": {
+      "status": "done",
+      "ts": "2026-07-24T05:53:45Z"
+    },
+    "AGGREGATE": {
+      "status": "done",
+      "ts": "2026-07-24T06:14:01Z"
+    },
+    "OUTPUT": {
+      "status": "done",
+      "ts": "2026-07-24T06:14:24Z"
+    }
+  },
+  "refine_passes": 0,
+  "draft_ref": "",
+  "verify_cmd": "python3 .atlas/session_3056019e-9fc7-4913-84c5-3e9c32e6f70c/verify_plan.py",
+  "scope_paths": [
+    "IMPLEMENTATION_PLAN.md"
+  ],
+  "baseline_sha": ""
+}
