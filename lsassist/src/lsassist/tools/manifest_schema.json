@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["name", "version", "purpose", "input_schema", "output_schema",
+               "permission_class", "capabilities", "timeout_s", "output_limits",
+               "concurrency", "idempotent", "dry_run", "rollback", "redaction", "tests"],
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_.]{1,31}$"},
+    "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "purpose": {"type": "string", "maxLength": 300},
+    "input_schema": {"type": "object"},
+    "output_schema": {"type": "object"},
+    "permission_class": {"enum": ["AUTO_READ", "AUTO_SCOPED_WRITE", "CONFIRM_ONCE", "CONFIRM_EXACT", "DENY_ALWAYS"]},
+    "capabilities": {
+      "type": "object",
+      "required": ["fs", "net", "proc"],
+      "properties": {
+        "fs": {"enum": ["none", "read_scoped", "write_scoped"]},
+        "net": {"enum": ["none", "fetch_allowlist"]},
+        "proc": {"enum": ["none", "spawn_argv"]}
+      }
+    },
+    "timeout_s": {"type": "integer", "minimum": 1, "maximum": 1800},
+    "output_limits": {
+      "type": "object",
+      "required": ["max_stdout_bytes", "max_stderr_bytes", "max_result_chars"],
+      "properties": {
+        "max_stdout_bytes": {"type": "integer", "maximum": 1048576},
+        "max_stderr_bytes": {"type": "integer", "maximum": 262144},
+        "max_result_chars": {"type": "integer", "maximum": 200000}
+      }
+    },
+    "concurrency": {"enum": ["exclusive", "shared_read", "unrestricted"]},
+    "idempotent": {"type": "boolean"},
+    "dry_run": {"type": "boolean"},
+    "rollback": {"enum": ["none", "checkpoint", "manual_steps"]},
+    "redaction": {"type": "array", "items": {"enum": ["paths", "secrets", "env", "full_body"]}},
+    "path_scope": {"enum": ["workspace", "system_read", "config_own", "any_read"]},
+    "tests": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

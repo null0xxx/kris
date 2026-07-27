@@ -24,6 +24,20 @@ lsassist = "lsassist.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Non-.py files that must travel with the code. Without this stanza setuptools
+# ships ONLY modules: a wheel built from this tree contained zero non-.py files,
+# so on any non-editable install (`pip install .`, or ADR-005's documented
+# `uv tool install` fast-path) `tools/registry.py` could not find its §6.2
+# schema and `load_registry()` raised on every call — kernel startup permanently
+# BLOCKED. The editable install ADR-005 prescribes as PRIMARY hid this, because
+# an editable install resolves back to the source tree.
+#
+# `manifests/*.json` is listed for the same reason and is NOT redundant: that
+# directory has no `__init__.py`, so `packages.find` never sees it as a package
+# and a bare `*.json` glob does not recurse into it. T3.04 populates it.
+[tool.setuptools.package-data]
+"lsassist.tools" = ["*.json", "manifests/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
@@ -64,9 +78,9 @@ strict = true
 [tool.coverage.run]
 branch = true
 # Scope = SPEC §23.1's TCB packages for Phase 2. `audit`/`recovery` join the
-# same floor in Phase 4. `source` (not `include`) is deliberate: `source` drags
-# never-imported modules into the report at 0%, so dead untested code turns the
-# gate red instead of vanishing from it.
+# same floor in Phase 4. `source` (not `include`) is
+# deliberate: `source` drags never-imported modules into the report at 0%, so
+# dead untested code turns the gate red instead of vanishing from it.
 source = ["src/lsassist/kernel", "src/lsassist/policy", "src/lsassist/sandbox"]
 # No `omit`: every omit pattern is a hole in the floor.
 

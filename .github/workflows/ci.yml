@@ -38,7 +38,7 @@
           "name": "install (hashes enforced, ADR-005)",
           "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
         },
-        {"name": "unit tests", "run": ".venv/bin/pytest tests/unit -q"}
+        {"name": "unit + contract tests", "run": ".venv/bin/pytest tests/unit tests/contract -q"}
       ]
     },
     "loc-count": {
