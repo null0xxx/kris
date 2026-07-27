@@ -81,12 +81,19 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 CI_WORKFLOW = GIT_ROOT / ".github" / "workflows" / "ci.yml"
 DEV_LOCK = REPO_ROOT / "requirements-dev.lock"
 
-#: SPEC §23.1's floor applies to these three packages at this phase.
-#: ``audit``/``recovery`` join the same gate in Phase 4.
+#: SPEC §23.1's floor. ``audit`` joined at T4.01, when the package stopped being
+#: an empty scaffold and became the single redactor engine (I8) — the most
+#: security-sensitive code in the tree, and the last place a coverage hole
+#: should exist. ``recovery`` joins the same way at T4.04.
+#:
+#: This tuple is asserted for EXACT equality against ``[tool.coverage.run]
+#: source`` and against CI's ``--source=``, so widening the floor is a
+#: three-file change by construction and cannot be done in one place only.
 TCB_PACKAGES = (
     "src/lsassist/kernel",
     "src/lsassist/policy",
     "src/lsassist/sandbox",
+    "src/lsassist/audit",
 )
 
 #: ``coverage report`` exits 2 when the total is below ``fail_under``.
@@ -621,6 +628,23 @@ def test_ci_measurement_source_matches_config() -> None:
     assert cli_scope == config_scope, "CI --source and [tool.coverage.run] source disagree"
 
 
+def test_every_test_layer_that_carries_a_gate_is_executed_by_ci() -> None:
+    """A test layer no CI job names is a gate that does not run.
+
+    Reproduced by the seam critic: `tests/contract/` was executed by NO job.
+    The `unit` job ran `pytest tests/unit` and the `coverage` job ran
+    `tests/unit tests/property`, while `tests/contract/` holds T3.01's
+    schema-vs-SPEC §6.2 diff and T3.08's §2.2/§5.1 prohibition gate — the ONLY
+    enforcement either node has. Raising `timeout_s`'s ceiling in the shipped
+    manifest schema from 1800 to 86400 left `pytest tests/unit` fully green.
+    """
+    commands = " ".join(
+        str(step.get("run", "")) for job in _jobs().values() for step in _steps(job)
+    )
+    for layer in ("tests/unit", "tests/property", "tests/contract"):
+        assert layer in commands, f"no CI job runs {layer}; its gates never execute"
+
+
 def test_coverage_job_report_does_not_override_fail_under() -> None:
     """``--fail-under`` on the CLI beats the config; if it is there it must be 100."""
     script = _step_containing(_coverage_job(), "coverage report")
@@ -715,22 +739,33 @@ def test_pragma_grep_is_silent_on_a_clean_tree(tmp_path: Path) -> None:
         "# pragma:no cover",
     ],
 )
-def test_pragma_grep_fires_on_a_planted_pragma(tmp_path: Path, pragma: str) -> None:
-    """Proof the grep actually fires — and on every spelling coverage honours."""
+@pytest.mark.parametrize("package", TCB_PACKAGES)
+def test_pragma_grep_fires_on_a_planted_pragma(tmp_path: Path, pragma: str, package: str) -> None:
+    """Proof the grep actually fires — every spelling, in EVERY TCB package.
+
+    Planting only in ``policy`` left the step's grep ARGUMENT list unpinned per
+    package: dropping ``src/lsassist/audit`` from it (while leaving it in the
+    ``test -d`` loop) failed open with the whole suite green. Reproduced.
+    """
     root = _tcb_shaped_tree(
-        tmp_path, {"src/lsassist/policy/canonical.py": f"def f():\n    return 1  {pragma}\n"}
+        tmp_path, {f"{package}/planted.py": f"def f():\n    return 1  {pragma}\n"}
     )
     result = _run_pragma_step(root)
     assert result.returncode != EXIT_OK, (
-        f"the grep did not fire on {pragma!r}:\n{result.stdout}\n{result.stderr}"
+        f"the grep did not fire on {pragma!r} in {package}:\n{result.stdout}\n{result.stderr}"
     )
 
 
-def test_pragma_grep_fails_closed_when_a_tcb_package_is_missing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("package", TCB_PACKAGES)
+def test_pragma_grep_fails_closed_when_a_tcb_package_is_missing(
+    tmp_path: Path, package: str
+) -> None:
     """``grep`` exits 2 (not 1) when a path does not exist, so a naive
     ``if grep …; then exit 1; fi`` **passes** after a package rename. The step
-    must check the directories exist first."""
-    root = _tcb_shaped_tree(tmp_path, {}, skip="sandbox")
+    must check the directories exist first — for EVERY package, not one of them.
+    Dropping a single package from the ``test -d`` loop failed open. Reproduced.
+    """
+    root = _tcb_shaped_tree(tmp_path, {}, skip=package.rsplit("/", 1)[-1])
     result = _run_pragma_step(root)
     assert result.returncode != EXIT_OK, (
         "the pragma grep failed OPEN with a TCB package missing:\n"

@@ -58,6 +58,58 @@
     "ghp-not-a-token",
     "sk-tooShort",
     "disk-0123456789abcdefghij",
-    "task_0123456789abcdefghij"
+    "task_0123456789abcdefghij",
+    "-----BEGIN CERTIFICATE-----",
+    "-----BEGIN PUBLIC KEY-----",
+    "/usr/lib/python3.12/site-packages/lsassist/audit/redactor.py",
+    "0123456789abcdef0123456789abcdef01234567",
+    "import re\nre.sub(pattern, repl, text)",
+    "AKIAsmall",
+    "ghp_short",
+    "[REDACTED:private-key]",
+    "[REDACTED:kimi-api-key]"
+  ],
+  "_engine_comment": "T4.01 addition. `engine_canaries` covers the §12.4 classes the ENGINE owns rather than the T1.10 pattern DATA: full PEM BLOCKS (T1.10's private-key pattern matches only the BEGIN header line, so the engine widens it to the block), the dynamic configured-secret exact match, and DENY-path content. They live in a SEPARATE key because `canaries` is pinned element-for-element to config/redaction_patterns.py's CANARY_SEED, and T4.01 must not modify config/. Every value is SYNTHETIC.",
+  "engine_canaries": [
+    {
+      "value": "-----BEGIN RSA PRIVATE KEY-----\nU1lOVEhFVElDLUNBTkFSWS1ERUNPWS1OT1QtQS1SRUFMLUtFWQ==\nSYNTHETIC CANARY DECOY NOT A REAL KEY\n-----END RSA PRIVATE KEY-----",
+      "class_label": "private-key",
+      "note": "full RSA block; the base64 body must not survive"
+    },
+    {
+      "value": "-----BEGIN EC PRIVATE KEY-----\nU1lOVEhFVElDLUNBTkFSWS1FQy1ERUNPWQ==\nSYNTHETIC CANARY DECOY EC NOT REAL\n-----END EC PRIVATE KEY-----",
+      "class_label": "private-key",
+      "note": "full EC block"
+    },
+    {
+      "value": "-----BEGIN OPENSSH PRIVATE KEY-----\nc3ludGhldGljIGNhbmFyeSBkZWNveSBub3QgcmVhbA==\nSYNTHETIC CANARY DECOY\n-----END OPENSSH PRIVATE KEY-----",
+      "class_label": "private-key",
+      "note": "full OpenSSH block"
+    },
+    {
+      "value": "-----BEGIN PRIVATE KEY-----\nU1lOVEhFVElDLUNBTkFSWS1ERUNPWQ==\nSYNTHETIC CANARY DECOY\n-----END PRIVATE KEY-----",
+      "class_label": "private-key",
+      "note": "full PKCS#8 block"
+    },
+    {
+      "value": "-----BEGIN RSA PRIVATE KEY-----\nU1lOVEhFVElDLUNBTkFSWS1UUlVOQ0FURUQtREVDT1k=\nSYNTHETIC CANARY DECOY truncated, no END line",
+      "class_label": "private-key",
+      "note": "no END line; must redact to end of text (fail-closed)"
+    },
+    {
+      "value": "CANARY-CONFIGURED-SECRET-VALUE-0000",
+      "class_label": "configured-secret",
+      "note": "supplied at runtime via exact_match_pattern"
+    },
+    {
+      "value": "/home/canary/.ssh/id_ed25519",
+      "class_label": "deny-path-content",
+      "note": "SPEC 7.3 DENY path supplied at runtime"
+    },
+    {
+      "value": "/home/canary/.aws/credentials",
+      "class_label": "deny-path-content",
+      "note": "SPEC 7.3 DENY path supplied at runtime"
+    }
   ]
 }

@@ -15,7 +15,7 @@
 - **Gate:** 4 (implementation) — IN PROGRESS
 - **Source of truth for tasks:** `../IMPLEMENTATION_PLAN.md` (70 tasks, 6 phases)
 - **Repo:** `../lsassist` (branch `main`)
-- **Last updated:** 2026-07-24
+- **Last updated:** 2026-07-27
 
 ---
 
@@ -118,7 +118,98 @@ Code ships §8.1 **verbatim** and flags it (no silent reorder). Options: **(A) m
 - **`(BLOCKED, budget_exhausted)` is not constructible** — `contracts.Verdict` requires a rule id or provider status for BLOCKED, and there is no field for the budget kind. `require_coherent_pair` accepts the pair so a runner can gate it, but emitting the record needs a contracts field.
 - **Collaborator adapters live only in tests** — `RegistryView`/`PolicyView`/`ProviderView`/`VerdictView`/`ReplayView` have no `src/` implementation; `tests/integration/test_kernel_seams.py` is the worked example T5.12 must productionize.
 
-### ⏭️ NEXT: **T2.12** (TCB LOC checkpoint gate — decide the tokei question above) → **T2.13** (100%-branch coverage gate; still blocked on the `pytest-cov` mini-ADR). That closes Phase 2 and the whole TCB. Then (T2.07 §4 state machine — EXECUTE only via AUTO or valid token I15/AC-07; T2.08 budgets/loop; T2.09 verdict I12; §4.6 untrusted wrap; T2.10/11). Close with **T2.12** TCB-LOC CI gate + **T2.13** 100%-branch coverage gate.
+| **T2.12+T2.13** | **GREEN** | **5baa9e9** | TCB LOC gate (tokei-style; **measurement correction**, not a budget relaxation) + 100% branch gate + **ADR-011** (`coverage`, not `pytest-cov`). T2.13's premise was FALSE — the tree was at 99% with a `# pragma: no cover` hiding two statements; closed with real tests. 5+16 mutations, all killed. **Phase 2 COMPLETE.** |
+
+---
+
+## Phase 3/4 — Wave 1 (T3.01 · T3.08 · T4.01), 2026-07-27
+
+Three file-disjoint frontier tasks built as one wave, each RED-first, then put
+through **16 isolated adversarial agents** (7 per-node lens critics + 8 refuters +
+1 seam critic). They returned **37 findings**; the orchestrator reproduced the
+material ones firsthand before acting on any of them, and two were REFUTED and
+dropped. Everything below landed in a single refine pass.
+
+| Task | Verdict | Note |
+|---|---|---|
+| **pre-flight** | **GREEN** (`f3b0212`) | `chore:` — CI restored to the git root. The 2026-07-26 re-root left `.github/workflows/ci.yml` inside `lsassist/`, so **all five gate jobs had been inert since `b79267c`** — nothing was red because nothing ran. `git mv` + `defaults.run.working-directory`, plus a second break the move alone would not have fixed: `hashFiles()` resolves against `GITHUB_WORKSPACE`, NOT `working-directory`, so all three pip cache keys had collapsed to a constant. 3 new location pins, both mutation-proven. |
+| **T3.01** | **GREEN** | `tools/registry.py` + `manifest_schema.json` (§6.2 **verbatim**, extracted from SPEC.md rather than retyped). Immutable catalog, no public constructor, duplicate-name rejection naming BOTH files, fail-closed load. **TWO independent encodings of §6.2** (shipped JSON Schema + `contracts.ToolManifest`) validated in that ORDER — measured: pydantic's lax mode accepts 5 documents §6.2 rejects (`idempotent:"yes"`, `dry_run:1`, `timeout_s:"10"`, …), so schema-first is load-bearing. Non-TCB: TCB LOC unmoved. |
+| **T3.08** | **GREEN** | `providers/base.py` — plumbing only. Contract types re-exported by **IDENTITY** (a parallel `ProviderError` would break the kernel's `except`). `UsageCounter` monotonic by construction (a negative delta would buy back §4.3 budget), `healthy`/`unhealthy`, `ensure_provider_profile`. The §2.2/§5.1 prohibition list lives in `base.py` as DATA and is enforced by an **AST** checker (grep would flag its own rule list). |
+| **T4.01** | **GREEN** | `audit/redactor.py` — THE single redactor (I8). Consumes T1.10's DATA by reference. Ordered rules to a **fixpoint**, `[REDACTED:<class>]`, hits record class+count, fail-closed to digest-only with a payload-free `error_detail`. Corpus 100% on all 7 §12.4 classes; fuzz **10,000 secret-shaped examples, 0 leaks** (measured: 2500 passing / 0 invalid × 4 secret strategies). `audit` joined the §23.1 branch floor — **100% branch, 0 partial, 0 pragmas**. |
+
+### 🔴 What the adversarial round found — every one reproduced firsthand
+
+The three nodes were **not** committable as first drafted. Ordered by severity:
+
+| Sev | Defect | Fix |
+|---|---|---|
+| **CRITICAL** | **OpenPGP armored private keys were not redacted at all.** T1.10's source ends `PRIVATE KEY-----`; PGP armor ends `PRIVATE KEY BLOCK-----`, so it matched nothing — while `~/.gnupg` is a §7.3 DENY_ALWAYS subtree. | engine-owned BEGIN form; **named residual: this is DATA and belongs in T1.10's table** |
+| **HIGH** | **An injected `-----END … PRIVATE KEY-----` truncated the block** and published the real body verbatim. Tool and model output can contain such a line. | body is now GREEDY-to-last-END, TEMPERED so it cannot cross the next `BEGIN`. `<body>(?:<end>\|\Z)` is WRONG and was measured to be: `\Z` matches empty at EOF, so the greedy body ate the whole payload |
+| **HIGH** | **A secret revealed by an earlier replacement was emitted verbatim.** `AKIA…sk-…`: the `sk-` rule's `(?<![A-Za-z0-9])` boundary failed while the AWS prefix was still there, and by the time AWS ran, `sk-` had already run. | ordered pass now iterates to a **fixpoint** (`MAX_PASSES`), non-convergence is an engine error |
+| **HIGH** | **An empty or filtered pattern table built a NO-OP redactor reporting clean success** — the one degenerate input that failed **OPEN**. | a table missing any §12.4 class T1.10 declares is refused |
+| **HIGH** | **`_fail_closed(digest, detail)` discarded `detail`.** Four call sites computed a reason; all four dropped it. The docstring said "the reason recorded". | `error_detail` on `AuditRedaction`, payload-free by construction (build-time keeps the message; substitution-time records the exception TYPE only, because an arbitrary `str(exc)` can quote the secret) |
+| **HIGH** | **`tests/contract/` was executed by NO CI job.** Both new nodes ship their only enforcement gate there. Raising the shipped schema's `timeout_s` ceiling 1800→86400 left `pytest tests/unit` fully green. | `unit` job runs `tests/unit tests/contract`; a test now pins that every layer carrying a gate is named by some job |
+| **HIGH** | **The §2.2/§5.1 prohibition gate was theatre.** Six spellings measured, six MISSED: `from os import system`, `Path(p).write_text(t)`, `p.write_text(t)`, `from ..kernel import decide`, `importlib.import_module(...)`, `sys.stderr.write(m)`. | symbol list + receiver-independent METHOD matching + relative-import resolution; each bypass is now its own harness guard |
+| MEDIUM | `repr(text)` sat OUTSIDE the try, so a hostile `__repr__` made the "total function" raise at the caller. | moved inside |
+| MEDIUM | `deny_paths` were silently DISCARDED when the table had no slot to place them in. | fail-closed; second lock kept and tested by disabling the first |
+| MEDIUM | **JSON duplicate keys collapsed last-wins**: a manifest declaring `permission_class` as both `AUTO_READ` and `DENY_ALWAYS` loaded as `DENY_ALWAYS`. The §6.2/§7.1 permission CEILING decided by parser trivia. | `object_pairs_hook` refuses any repeated key |
+| MEDIUM | **`manifest_schema.json` was not packaged.** A wheel built from this tree contained ZERO non-.py files, so `load_registry()` raised on every call for any non-editable install — kernel startup permanently BLOCKED. Hidden by ADR-005's editable install, which resolves back to the source tree. | `[tool.setuptools.package-data]` incl. `manifests/*.json` (that dir has no `__init__.py`, so a bare `*.json` glob does not reach it) |
+| MEDIUM | `engine_canaries` escaped T1.10's AC-12 "every value is synthetic" guard, which parametrizes over `canaries` only. | mirrored guard over the new array |
+| MEDIUM | The pragma-grep step's two package lists were unpinned **individually**: dropping `audit` from either failed open with the suite green. | both gate tests parametrized over every TCB package |
+| LOW | `Redactor.rules` handed out compiled patterns — and a configured-secret rule's source is `re.escape(<the secret>)`. | returns `RuleInfo(name, class_label)` only |
+| LOW | The registry's `_issuance` sentinel was **written and never read**; the docstring claimed a sandbox-style forgery defense that did not exist. | removed, and the docstring now says plainly that this is a MISUSE gate, not a forgery gate |
+| — | REFUTED and dropped: the `NaN` cost guard, and "the default facade silently no-ops two classes" (documented, tested, and unavoidable — neither class is knowable statically). | — |
+
+**Gate state after Wave 1:** pytest **2244 passed** (1 pre-existing failure deselected, see below) · ruff clean · `mypy --strict` clean on all 6 TCB packages + `providers/base.py` · `mypy src` clean (54 files) · **TCB LOC 3747 / 6000** · **100% branch on kernel+policy+sandbox+audit**, 0 partial, 0 pragmas.
+
+### 🔴 BLOCKING, OUT OF SCOPE — a pre-existing kernel defect surfaced by Hypothesis
+
+`tests/property/kernel/test_state_machine.py::test_wired_decision_states_never_park`
+FAILS, and **reproduces at HEAD with this wave's changes stashed** — it is a
+latent defect in already-committed TCB code (T2.07-T2.11, `f86582c`) that the
+randomized property suite had simply never generated an input for.
+
+Root cause, isolated: `machine.py` contains two functions that **disagree about
+what `ReplayView.replay_verdict() -> None` means**.
+
+- `replay_block()`: `None if seen is None or seen == REPLAY_ALLOWED else seen` → `None` is NOT a block.
+- `_g_replay_allowed()`: `replay_verdict() == REPLAY_ALLOWED` → `None` is NOT allowed.
+
+So with an `AUTO_READ` request, budget and provider fine, and a replay view that
+returns no verdict, `POLICY_CHECK --POLICY_CLASSIFIED-->` has **no firing row**:
+`_g_auto_class` false, `_g_needs_consent` false (not a CONFIRM class), no BLOCKED
+guard true. `missing_measurements()` reports nothing (the collaborator is
+present; only its ANSWER is absent) and `replay_block()` names nothing. The turn
+parks with **no diagnosis at all** — precisely the outcome `replay_block`'s own
+docstring says must not happen ("a silent stall would make the runner retry
+forever").
+
+Fail-CLOSED (safe direction) but undiagnosable. **Not fixed here:** it is
+`kernel/`, another task's TCB file, and the fix is a design choice with a
+security dimension — treating `None` as ALLOWED would open an I15 EXECUTE edge on
+an unconsulted ledger. The two fail-closed options are (B) make an absent replay
+verdict a *missing measurement*, so the runner reports "kernel misconfigured", or
+(C) have `replay_block()` name it as a block condition. **Human-gated, HARDEN-04,
+per the HARDEN-01/02/03 precedent.**
+
+### 🔖 Named residuals from Wave 1
+- **`_ENGINE_PRIVATE_KEY_BEGINS` is pattern DATA living in the engine.** OpenPGP armor belongs in T1.10's table; it is in `audit/redactor.py` only because T4.01's scope forbids touching `config/`. A follow-up should move it and delete the constant.
+- **`payload_digest` is a confirmation oracle.** It is sha256 of the PRE-redaction text, as T4.01 specifies. Anyone who can guess a secret can confirm it against a stored record. Inherent to digest-based evidence (§6.5 does the same for `stdout_digest`); recorded rather than silently changed.
+- **`contracts.ToolManifest` is weaker than §6.2** in pydantic's lax mode (measured: at least 5 vectors). The registry contains it by validating schema-first. Tightening the model (`ConfigDict(strict=True)`) is a TCB `contracts/` change and was not made from a non-TCB task.
+- **`AssistantTurn.reasoning_opaque` is excluded from `model_dump`/`model_dump_json`/`repr` but NOT from `dict(turn)`, `turn.__dict__` or `pickle`.** `contracts/provider.py`'s docstring says "every serialization form", which overstates it. T3.08 did not edit that TCB file; T4.02's writer must not reach the blob by those routes.
+- **T4.02 must hold ONE `Redactor` built at startup.** The facade rebuilds and recompiles the rule set whenever runtime data is passed, and in production `configured_secrets` is never empty.
+- **`MAX_PAYLOAD_CHARS` (1 MB) is an engine-invented DoS cap**, not a plan requirement. Documented; oversized payloads are stored digest-only.
+
+### ⏭️ NEXT after this wave
+Recomputing the closure over `Depends on`: **T3.02** (dispatcher — the `tcb-planned` file, which flips the LOC manifest to `tcb` the moment it appears) and **T4.02** (audit writer, which unblocks T3.03). Carry the cross-phase obligations already recorded for T3.02 (PolicyStores from XdgPaths, realpath + leading-`//` collapse, fstat-pinned read/exec handlers, `env={}`, argv LIST, never an unsandboxed fallback).
+
+---
+
+<details><summary>Superseded planning note (kept for the record)</summary>
+
+### ⏭️ (SUPERSEDED) NEXT: **T2.12** (TCB LOC checkpoint gate — decide the tokei question above) → **T2.13** (100%-branch coverage gate; still blocked on the `pytest-cov` mini-ADR). That closes Phase 2 and the whole TCB. Then (T2.07 §4 state machine — EXECUTE only via AUTO or valid token I15/AC-07; T2.08 budgets/loop; T2.09 verdict I12; §4.6 untrusted wrap; T2.10/11). Close with **T2.12** TCB-LOC CI gate + **T2.13** 100%-branch coverage gate.
+
+</details>
 
 **`policy/` package DONE** (T2.01–T2.04): classify (R1–R9) · canonicalize+denylist (§7.3/§7.5) · HMAC token (mint/verify) · re-canonicalization (invalidation). = the §7 permission-engine core. Pure except the two §7.5 I/O boundaries (`canonical.canonicalize`, `recheck.OsFsView`).
 

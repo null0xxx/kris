@@ -77,11 +77,16 @@ strict = true
 # tests live in tests/unit/scripts/test_coverage_gate.py.
 [tool.coverage.run]
 branch = true
-# Scope = SPEC §23.1's TCB packages for Phase 2. `audit`/`recovery` join the
-# same floor in Phase 4. `source` (not `include`) is
+# Scope = SPEC §23.1's TCB packages. `audit` joined at T4.01 (the single §14.3
+# redactor engine, I8); `recovery` joins at T4.04. `source` (not `include`) is
 # deliberate: `source` drags never-imported modules into the report at 0%, so
 # dead untested code turns the gate red instead of vanishing from it.
-source = ["src/lsassist/kernel", "src/lsassist/policy", "src/lsassist/sandbox"]
+source = [
+    "src/lsassist/kernel",
+    "src/lsassist/policy",
+    "src/lsassist/sandbox",
+    "src/lsassist/audit",
+]
 # No `omit`: every omit pattern is a hole in the floor.
 
 [tool.coverage.report]
