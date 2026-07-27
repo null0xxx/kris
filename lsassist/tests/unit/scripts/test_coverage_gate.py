@@ -72,8 +72,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+#: The git root, one level ABOVE the Python project root (re-root 2026-07-26).
+#: GitHub Actions only executes workflows found at the repository root, so the
+#: workflow is the one gate artifact that does NOT sit beside `pyproject.toml`.
+#: `tests/unit/test_repo_layout.py` pins that location in both directions.
+GIT_ROOT = REPO_ROOT.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+CI_WORKFLOW = GIT_ROOT / ".github" / "workflows" / "ci.yml"
 DEV_LOCK = REPO_ROOT / "requirements-dev.lock"
 
 #: SPEC §23.1's floor applies to these three packages at this phase.

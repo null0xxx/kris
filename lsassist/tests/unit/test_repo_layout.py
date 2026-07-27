@@ -4,19 +4,27 @@ Asserts:
 1. Every SPEC §22 package directory exists with an ``__init__.py``.
 2. ``pyproject.toml`` parses and declares ``requires-python = ">=3.12"``.
 3. ``scripts/loc-count`` is executable and reports 0 TCB LOC on an empty tree.
-4. ``.github/workflows/ci.yml`` exists, is valid YAML, and defines the three
-   gate jobs: ``ruff``, ``unit``, ``loc-count``.
+4. ``.github/workflows/ci.yml`` exists **at the git root**, is valid YAML, and
+   defines the three gate jobs: ``ruff``, ``unit``, ``loc-count``.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+#: The git root, one level ABOVE the Python project root. The repository was
+#: re-rooted here on 2026-07-26 (`chore: re-root repository at project top
+#: level`), so `lsassist/` is now a subdirectory of the checkout rather than the
+#: checkout itself. GitHub Actions only executes workflows found at the
+#: repository root, which is why `.github/` may not live beside `pyproject.toml`.
+GIT_ROOT = REPO_ROOT.parent
 
 # SPEC §22 src/lsassist package tree.
 PACKAGES = [
@@ -95,10 +103,57 @@ def _load_ci_workflow(path: Path) -> dict:
 
 
 def test_ci_workflow_skeleton() -> None:
-    ci = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-    assert ci.is_file(), ".github/workflows/ci.yml missing"
+    ci = GIT_ROOT / ".github" / "workflows" / "ci.yml"
+    assert ci.is_file(), ".github/workflows/ci.yml missing at the git root"
     workflow = _load_ci_workflow(ci)  # raises if not valid YAML(JSON subset)
     jobs = workflow.get("jobs")
     assert isinstance(jobs, dict), "ci.yml has no jobs mapping"
     for job in ("ruff", "unit", "loc-count"):
         assert job in jobs, f"ci.yml missing job: {job}"
+
+
+def test_ci_workflow_is_at_the_git_root_not_the_project_root() -> None:
+    """A workflow below the repository root is INERT — Actions never runs it.
+
+    Regression pin for the 2026-07-26 re-root: `.github/` stayed inside
+    `lsassist/` while the checkout root moved one level up, so all five gate
+    jobs silently stopped running on push while the file still looked correct.
+    A gate that does not execute is indistinguishable from a passing gate, so
+    the location is asserted in both directions.
+    """
+    assert not (REPO_ROOT / ".github").exists(), (
+        f"{REPO_ROOT / '.github'} exists: a workflow below the repository root is "
+        "never executed by GitHub Actions"
+    )
+
+
+def test_ci_run_steps_resolve_against_the_project_root() -> None:
+    """`actions/checkout` lands at the git root, one level above `pyproject.toml`.
+
+    Every `run:` step is written relative to `lsassist/` (`scripts/loc-count`,
+    `-r requirements.lock`, `tests/unit`), so the workflow-level `defaults`
+    is what keeps them resolvable after the re-root.
+    """
+    workflow = _load_ci_workflow(GIT_ROOT / ".github" / "workflows" / "ci.yml")
+    working_directory = workflow.get("defaults", {}).get("run", {}).get("working-directory")
+    assert working_directory == "lsassist", (
+        f"defaults.run.working-directory={working_directory!r}; every run: step in this "
+        "workflow is relative to the project root, not the checkout root"
+    )
+
+
+def test_ci_hashfiles_paths_are_checkout_relative() -> None:
+    """`hashFiles()` resolves against GITHUB_WORKSPACE, NOT `working-directory`.
+
+    `defaults.run` only governs `run:` steps. A `hashFiles('requirements.lock')`
+    left project-relative silently returns the empty string after the re-root,
+    collapsing the pip cache key to a constant that no longer tracks the locks.
+    """
+    raw = (GIT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    for match in re.finditer(r"hashFiles\(([^)]*)\)", raw):
+        for argument in re.findall(r"'([^']*)'", match.group(1)):
+            assert argument.startswith("lsassist/"), (
+                f"hashFiles argument {argument!r} is project-relative; it resolves "
+                "against the checkout root and will match nothing"
+            )
+            assert (GIT_ROOT / argument).is_file(), f"hashFiles references a missing {argument!r}"

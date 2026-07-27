@@ -1,6 +1,7 @@
 {
   "name": "ci",
   "on": ["push", "pull_request"],
+  "defaults": {"run": {"working-directory": "lsassist"}},
   "jobs": {
     "ruff": {
       "runs-on": "ubuntu-latest",
@@ -11,7 +12,7 @@
           "uses": "actions/cache@v4",
           "with": {
             "path": "~/.cache/pip",
-            "key": "pip-${{ hashFiles('requirements.lock', 'requirements-dev.lock') }}"
+            "key": "pip-${{ hashFiles('lsassist/requirements.lock', 'lsassist/requirements-dev.lock') }}"
           }
         },
         {
@@ -30,7 +31,7 @@
           "uses": "actions/cache@v4",
           "with": {
             "path": "~/.cache/pip",
-            "key": "pip-${{ hashFiles('requirements.lock', 'requirements-dev.lock') }}"
+            "key": "pip-${{ hashFiles('lsassist/requirements.lock', 'lsassist/requirements-dev.lock') }}"
           }
         },
         {
@@ -71,7 +72,7 @@
           "uses": "actions/cache@v4",
           "with": {
             "path": "~/.cache/pip",
-            "key": "pip-${{ hashFiles('requirements.lock', 'requirements-dev.lock') }}"
+            "key": "pip-${{ hashFiles('lsassist/requirements.lock', 'lsassist/requirements-dev.lock') }}"
           }
         },
         {
