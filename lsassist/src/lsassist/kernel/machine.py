@@ -868,6 +868,20 @@ _REQUIRED_INPUTS: Final[dict[State, tuple[str, ...]]] = {
 }
 
 
+#: Readings a state's rows need from a collaborator that is itself PRESENT.
+#:
+#: HARDEN-04. Checking only that the collaborator object exists is not enough:
+#: :class:`ReplayView` documents ``None`` as "not consulted", and
+#: :func:`_g_replay_allowed` treats it as a refusal, so a wired-but-unconsulted
+#: ledger produced a stall that NOTHING could explain — see
+#: :func:`missing_measurements` for the trace. Every entry here names a reading
+#: whose absence the guards can never resolve by waiting.
+_REQUIRED_READINGS: Final[dict[State, tuple[tuple[str, str], ...]]] = {
+    State.POLICY_CHECK: (("replay", "replay_verdict"),),
+    State.APPROVAL: (("replay", "replay_verdict"),),
+}
+
+
 def missing_measurements(state: State, guard_input: GuardInput) -> tuple[str, ...]:
     """Which inputs ``state``'s rows need but the bundle does not carry. PURE.
 
@@ -881,10 +895,31 @@ def missing_measurements(state: State, guard_input: GuardInput) -> tuple[str, ..
     - this returns an EMPTY tuple → every input was present and the guards
       genuinely did not hold: a WAIT (the child has not exited, the user has not
       answered). The runner should call again when the fact changes.
+
+    **HARDEN-04 — a collaborator that is PRESENT but was never CONSULTED is the
+    first kind, not the second.** Before this, only ``getattr(...) is None`` was
+    checked, so an ``AUTO_READ`` request with a wired :class:`ReplayView` whose
+    ``replay_verdict()`` returned ``None`` fell through every classification:
+    ``_g_auto_class`` false (``None`` is not ``REPLAY_ALLOWED``),
+    ``_g_needs_consent`` false (not a CONFIRM class), no BLOCKED guard true, this
+    function EMPTY (the view object existed), and :func:`replay_block` silent (it
+    reads ``None`` as "not blocking"). The turn parked with no diagnosis at all —
+    exactly the "silent stall would make the runner retry forever" outcome
+    ``replay_block``'s own docstring rules out. Two functions in this module
+    disagreed about what ``None`` means; the Protocol settles it — "``None`` if
+    not consulted" is an ABSENT MEASUREMENT, so it is named here.
+
+    Still PURE: the reading below is the same collaborator call the guards
+    already make, and ``ReplayView`` is by contract a read-only view.
     """
-    return tuple(
+    missing = [
         name for name in _REQUIRED_INPUTS.get(state, ()) if getattr(guard_input, name) is None
-    )
+    ]
+    for attribute, reading in _REQUIRED_READINGS.get(state, ()):
+        collaborator = getattr(guard_input, attribute)
+        if collaborator is not None and getattr(collaborator, reading)() is None:
+            missing.append(f"{attribute}.{reading}")
+    return tuple(missing)
 
 
 def replay_block(guard_input: GuardInput) -> str | None:

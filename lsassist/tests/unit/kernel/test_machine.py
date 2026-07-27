@@ -1684,3 +1684,74 @@ def test_inner_loop_execute_observe_verify_can_repeat_and_return_to_plan() -> No
         assert machine_state.state is State.POLICY_CHECK
         machine_state = advance(machine_state, Event.POLICY_CLASSIFIED, _policy_check(AR))
         assert machine_state.state is State.EXECUTE
+
+
+# ==========================================================================
+# HARDEN-04 — a PRESENT collaborator that was never CONSULTED
+# ==========================================================================
+class _UnconsultedReplay:
+    """A wired ReplayView that answers ``None`` — the Protocol's "not consulted"."""
+
+    def replay_verdict(self) -> str | None:
+        return None
+
+
+def _auto_read_guard(replay: object) -> GuardInput:
+    """An AUTO_READ request with budget and provider healthy: nothing else stalls."""
+    return GuardInput(
+        request=ToolRequest(call_id="c1", tool="fs.read", args={"path": "/ws/a.txt"}),
+        policy=FakePolicy(PermissionClass.AUTO_READ),
+        budget=FakeBudget(None),
+        provider=FakeProvider(True),
+        replay=replay,  # type: ignore[arg-type]
+    )
+
+
+def test_an_unconsulted_replay_view_is_a_missing_measurement() -> None:
+    """The HARDEN-04 defect, pinned.
+
+    Before: ``missing_measurements`` checked only that the collaborator OBJECT
+    was present, so a wired view answering ``None`` produced a park that nothing
+    could explain — ``_g_auto_class`` false, ``_g_needs_consent`` false, no
+    BLOCKED guard true, this function EMPTY, and ``replay_block()`` silent
+    (it reads ``None`` as "not blocking"). The runner would retry forever.
+    """
+    guard_input = _auto_read_guard(_UnconsultedReplay())
+
+    assert step(State.POLICY_CHECK, Event.POLICY_CLASSIFIED, guard_input) is None
+    assert replay_block(guard_input) is None, "an unconsulted ledger is not a BLOCK"
+    assert "replay.replay_verdict" in missing_measurements(State.POLICY_CHECK, guard_input), (
+        "the stall must be attributable: a wired-but-unconsulted view is a WIRING bug"
+    )
+
+
+def test_approval_reports_the_same_unconsulted_reading() -> None:
+    """APPROVAL's ``_g_valid_token`` reads the same verdict, so it has the same hole."""
+    guard_input = _auto_read_guard(_UnconsultedReplay())
+    assert "replay.replay_verdict" in missing_measurements(State.APPROVAL, guard_input)
+
+
+def test_a_consulted_replay_view_is_not_reported_missing() -> None:
+    """The counterweight: naming a present reading would make every turn a WIRING bug."""
+
+    class _Allowed:
+        def replay_verdict(self) -> str | None:
+            return REPLAY_ALLOWED
+
+    guard_input = _auto_read_guard(_Allowed())
+    assert missing_measurements(State.POLICY_CHECK, guard_input) == ()
+    assert step(State.POLICY_CHECK, Event.POLICY_CLASSIFIED, guard_input) is not None
+
+
+def test_a_refusing_verdict_stays_a_named_block_not_a_missing_measurement() -> None:
+    """``ALREADY_EXECUTED`` was MEASURED. It is §4.7's documented stall, and
+    ``replay_block`` — not ``missing_measurements`` — is what names it."""
+
+    class _Seen:
+        def replay_verdict(self) -> str | None:
+            return "ALREADY_EXECUTED"
+
+    guard_input = _auto_read_guard(_Seen())
+    assert missing_measurements(State.POLICY_CHECK, guard_input) == ()
+    assert replay_block(guard_input) == "ALREADY_EXECUTED"
+    assert step(State.POLICY_CHECK, Event.POLICY_CLASSIFIED, guard_input) is None

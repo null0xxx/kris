@@ -160,9 +160,9 @@ The three nodes were **not** committable as first drafted. Ordered by severity:
 | LOW | The registry's `_issuance` sentinel was **written and never read**; the docstring claimed a sandbox-style forgery defense that did not exist. | removed, and the docstring now says plainly that this is a MISUSE gate, not a forgery gate |
 | — | REFUTED and dropped: the `NaN` cost guard, and "the default facade silently no-ops two classes" (documented, tested, and unavoidable — neither class is knowable statically). | — |
 
-**Gate state after Wave 1:** pytest **2244 passed** (1 pre-existing failure deselected, see below) · ruff clean · `mypy --strict` clean on all 6 TCB packages + `providers/base.py` · `mypy src` clean (54 files) · **TCB LOC 3747 / 6000** · **100% branch on kernel+policy+sandbox+audit**, 0 partial, 0 pragmas.
+**Gate state after Wave 1 + HARDEN-04:** pytest **2249 passed, 0 failed, nothing deselected** · ruff clean · `mypy --strict` clean on all 6 TCB packages + `providers/base.py` · `mypy src` clean (54 files) · **TCB LOC 3756 / 6000** · **100% branch on kernel+policy+sandbox+audit**, 0 partial, 0 pragmas.
 
-### 🔴 BLOCKING, OUT OF SCOPE — a pre-existing kernel defect surfaced by Hypothesis
+### ✅ RESOLVED (HARDEN-04) — a pre-existing kernel defect surfaced by Hypothesis
 
 `tests/property/kernel/test_state_machine.py::test_wired_decision_states_never_park`
 FAILS, and **reproduces at HEAD with this wave's changes stashed** — it is a
@@ -184,13 +184,31 @@ parks with **no diagnosis at all** — precisely the outcome `replay_block`'s ow
 docstring says must not happen ("a silent stall would make the runner retry
 forever").
 
-Fail-CLOSED (safe direction) but undiagnosable. **Not fixed here:** it is
-`kernel/`, another task's TCB file, and the fix is a design choice with a
-security dimension — treating `None` as ALLOWED would open an I15 EXECUTE edge on
-an unconsulted ledger. The two fail-closed options are (B) make an absent replay
-verdict a *missing measurement*, so the runner reports "kernel misconfigured", or
-(C) have `replay_block()` name it as a block condition. **Human-gated, HARDEN-04,
-per the HARDEN-01/02/03 precedent.**
+Fail-CLOSED (safe direction) but undiagnosable. Treating `None` as ALLOWED would
+have opened an I15 EXECUTE edge on an unconsulted ledger, so that direction was
+never on the table.
+
+**FIXED — HARDEN-04, human-gated, option B.** The `ReplayView` Protocol settles
+what `None` means in its own words: *"the §4.7 verdict for the CURRENT action, or
+`None` if **not consulted**"*, and *"every other value, **and `None`**, refuses"*.
+So an absent verdict is an absent MEASUREMENT, not a state the guards can resolve
+by waiting — `missing_measurements()` now reports `replay.replay_verdict` for
+`POLICY_CHECK` and `APPROVAL` (`_g_valid_token` reads the same verdict, so
+APPROVAL had the identical hole). Nothing was invented: the fix restates the
+module's own contract, and `_REQUIRED_READINGS` generalises it so the next
+collaborator-with-an-absent-answer is a table row rather than a rediscovery.
+
+Hypothesis then moved to a SECOND counterexample, `ALREADY_EXECUTED`, which is
+the kernel wave's own **already-recorded residual** (§4.7 has no §4.2 row; the
+turn stalls fail-closed and `replay_block()` names it, pending a SPEC amendment).
+That one is a TEST-side gap: `test_wired_decision_states_never_park` honoured
+only ONE of the module's three documented stall kinds. Its exemption now covers
+`replay_block()` too — and is not a blanket escape, because when it fires the
+named condition is asserted to be a genuinely refusing verdict.
+
+2 mutations, 2 killed: reverting the reading check, and making an absent verdict
+count as ALLOWED (which the pre-existing N6 EXECUTE-edge test also caught —
+proof the fail-open direction was already fenced).
 
 ### 🔖 Named residuals from Wave 1
 - **`_ENGINE_PRIVATE_KEY_BEGINS` is pattern DATA living in the engine.** OpenPGP armor belongs in T1.10's table; it is in `audit/redactor.py` only because T4.01's scope forbids touching `config/`. A follow-up should move it and delete the constant.

@@ -47,6 +47,7 @@ from lsassist.kernel.machine import (
     advance,
     missing_measurements,
     reduced_class,
+    replay_block,
     step,
 )
 from lsassist.kernel.states import TERMINAL_STATES, Event, ExecOutcome, State
@@ -301,6 +302,10 @@ def test_terminal_state_is_never_left_mid_run(
 #: one row must always fire. The remaining states legitimately stall on an
 #: UNMEASURED fact (the child has not exited, the user has not answered) — a
 #: WAIT the runner resolves by calling again, not a park.
+#: The decision states whose EXECUTE edges the §4.7 replay verdict holds shut.
+#: `replay_block()` names the condition for these; the others never read it.
+_REPLAY_GATED_STATES: frozenset[State] = frozenset({State.POLICY_CHECK})
+
 TOTAL_DECISIONS: tuple[tuple[State, Event], ...] = (
     (State.GROUND, Event.CONTEXT_GATHERED),
     (State.PLAN, Event.PLAN_PROPOSED),
@@ -312,10 +317,32 @@ TOTAL_DECISIONS: tuple[tuple[State, Event], ...] = (
 @given(guard_input=guard_inputs())
 def test_wired_decision_states_never_park(guard_input: GuardInput) -> None:
     """S2/S5 as a property, narrowed by N4: a decision state whose inputs were
-    all MEASURED always moves. An unwired one stalls on purpose, and
-    ``missing_measurements`` names why rather than inventing a cause."""
+    all MEASURED always moves. An unwired one stalls on purpose, and the machine
+    NAMES why rather than inventing a cause.
+
+    ``machine.py`` documents THREE kinds of stall, and this test must honour all
+    three or it asserts something the machine never promised:
+
+    1. ``missing_measurements()`` non-empty — a collaborator or a reading is
+       absent. A WIRING bug the runner reports as "kernel misconfigured".
+    2. ``replay_block()`` non-``None`` — the §4.7 ledger WAS consulted and said
+       ``ALREADY_EXECUTED`` or ``PARTIAL_EXECUTION``. Neither has a §4.4 exit
+       reason or a §4.1 state, so routing them would mean inventing wire values;
+       the machine stalls fail-closed and names the condition instead. This is
+       the kernel wave's own recorded residual, awaiting a SPEC amendment.
+    3. everything else — the guards genuinely did not hold: a WAIT.
+
+    Only the third may never happen in a decision state. Hypothesis found (1)
+    and (2) in the same run; (1) was a real defect, fixed in HARDEN-04, and (2)
+    is this exemption. The exemption is not a blanket escape: when it fires, the
+    named condition is asserted to be real.
+    """
     for state, event in TOTAL_DECISIONS:
         if missing_measurements(state, guard_input):
+            continue
+        blocked = replay_block(guard_input)
+        if blocked is not None and state in _REPLAY_GATED_STATES:
+            assert blocked != REPLAY_ALLOWED, "a block must name a REFUSING verdict"
             continue
         assert step(state, event, guard_input) is not None, f"{state} parked"
 
