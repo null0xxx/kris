@@ -1,0 +1,6 @@
+# Repository-root ignores. The Python package carries its own `lsassist/.gitignore`.
+
+# Claude Code plugin skill-registry cache. Regenerated per session, not part of
+# the project — it has been showing up as untracked noise since the re-root and
+# must never be committed.
+.atl/
