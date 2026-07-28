@@ -309,8 +309,90 @@ bound).
 
 **Gate state after Wave 2:** pytest **2557 passed** · ruff clean · `mypy --strict` clean on 6 TCB packages + `tools/dispatcher.py` · **TCB LOC 4720 / 6000** · **100% branch on kernel+policy+sandbox+audit**, 0 partial, 0 pragmas · CI: 6 jobs.
 
-### ⏭️ NEXT frontier
+### ⏭️ (SUPERSEDED) NEXT frontier after Wave 2
 `T3.03` (dispatch steps 5-9 — now unblocked by T4.02) and `T4.03` (audit reader).
 T3.03 carries the recorded runner obligations from T2.06: `env={}` (never `None`),
 the argv LIST (never a shell string), the `prlimit` prefix, and bwrap missing →
 `sandbox_unavailable` → BLOCKED, never an unsandboxed fallback.
+
+---
+
+## Phase 3 — T3.03, 2026-07-28
+
+| Task | Verdict | Note |
+|---|---|---|
+| **T3.03** | **GREEN** (`d4f12c7`) | `tools/dispatcher.py` §6.3 steps 5-9 + the new **TCB** file `tools/result.py` (§6.5 assembly, pure). Both joined the LOC manifest, `mypy --strict` and the `dispatcher-coverage` job. RED first on both new layers (ImportError). |
+
+**Frontier note.** The recomputed closure at this point had **seven** ready tasks,
+not the two Wave 2 recorded: `T3.03`, `T3.09`, `T3.11`, `T4.03`, `T4.04`, `T4.07`,
+`T4.10`. T3.03 was taken because it unlocks the deepest chain (T3.04→T3.07 plus
+T5.05).
+
+### 🔴 §7.5 steps 2-3 did not exist
+
+Step 3's pre-exec re-canonicalization has nothing to compare against without an
+approval-time snapshot, and T3.02 stopped at the decision. `normalize()` now
+captures `path_snapshots`; a create-intent target snapshots its **parent**, which
+makes `recheck` work unchanged. It is deliberately **not** in `action_hash` — a
+snapshot measures the world, and folding it into the binding would break an
+approval the moment anything on disk moved.
+
+### 🔴 What the four isolated lenses found — four CRITICAL, every one reproduced
+
+The lenses ran with only {frozen intent, one diff, one lens, floors}. The risk and
+readability lenses converged **independently** on the same argv-parsing defect.
+
+| Sev | Defect | Fix |
+|---|---|---|
+| **CRITICAL** | **The wall-clock timeout was defeated by a child that closes both pipes and keeps running.** The selector loop ended on EOF, the deadline was only ever checked *inside* it, and `wait()` then blocked unbounded. Measured: `timeout_s=1` → returned after **20.00 s** with `timed_out=False`. `prlimit --cpu` cannot cover it (a sleeping process burns no CPU). A **HANG**, not a red test. | the deadline now outlives the read loop (`wait(timeout=…)` → kill → `wait()`) |
+| **CRITICAL** | **`_check_env_binding` scanned the whole composed argv**, including the model-supplied tool argv after `--`. `["/bin/echo","--setenv"]` ran off the end with a bare `IndexError` — neither `SandboxUnavailable` nor `ExecRefused`, so it escaped `run()` and the refusal was never journalled; two tokens later the same parse produced a **false** `ENV_REBOUND` on an approved call. | parse only the bwrap prefix (`takewhile(… != "--")`), short pairs dropped fail-closed |
+| **CRITICAL** | **A post-exec `RecheckError` escaped `run()`** after the tool had run and before step 9 — a completed action with no §14.1 record. Only the *pre*-exec `recheck` had a handler. | → `UNVERIFIED`, still journalled (I12: downgrade, never disappear) |
+| **CRITICAL** | **A spawn failure was never audited.** `Popen` raising `EAGAIN` under `RLIMIT_NPROC` (the limit HARDEN-03 already watched break this host) surfaced as a `DispatchError` no `except` caught. | §8.3 names it: `sandbox_unavailable` → BLOCKED, journalled like every other refusal |
+| **HIGH** | **The `spawn_capped` call-site contract test was THEATRE.** It grepped `src/` for `spawn_capped(`, and the only occurrence is the `def` line — the real invocation is spelled `runner(...)`. It passed on the definition alone, would have passed with **zero** callers, and could not see a second module using the same injected-default idiom. | AST walk: no other module *names* it, nothing *calls* it directly |
+| **HIGH** | "a schema-rejected result is never published" had **no assertion** — mutating it to `result=capped` left the whole suite green. | assertion added |
+| MEDIUM | **`output_schema` does not catch a non-serializable payload.** jsonschema validates only constrained properties, so `{"stdout": {1,2}}` passed and `json.dumps` raised *after* the tool ran. | typed, journalled `malformed_tool_result`; the message names the exception TYPE only (I8) |
+| MEDIUM | `_file_snapshot` bounded `st_size` once instead of the bytes read; a growing target under `ws` defeated its own documented cap. | bound moved into the read loop |
+| — | **REFUTED by measurement:** "bwrap's `--new-session` `setsid()`s away from the killed group, so the timeout cannot reach the workload". 3 sleepers inside a real sandbox, `timeout_s=2` → returned in **2.00 s**, rc 137, **zero survivors**. `--unshare-all` gives the sandbox its own PID namespace, so killing bwrap (its PID 1) reaps everything; `killpg` never needs to reach past it. | — |
+
+**7 mutations, 7 killed** — one per fix above.
+
+`audit` is now a **required** keyword on `run()`. An optional audit sink makes
+"every execution is recorded" a property of whoever remembered to pass one.
+
+**Gate state after T3.03:** pytest **2632 passed** · ruff clean · `mypy --strict`
+clean on 6 TCB packages + `tools/dispatcher.py` + `tools/result.py` · **TCB LOC
+5359 / 6000** · **100% branch, 0 partial, 0 pragmas** on kernel+policy+sandbox+audit
+**and** on both `tools/` TCB files · CI **7 jobs**.
+
+### 🧪 CI — a second layer that no job ran
+
+`tests/integration` and `tests/e2e` were executed by **no** CI job — the same
+defect the Wave-1 seam critic found in `tests/contract/`. The new `integration`
+job runs both, **installs bubblewrap** (a suite that skips is not a gate) and is
+bounded by `timeout-minutes` (a hang is now a proven failure mode in this code).
+
+### 🔖 Named residuals from T3.03
+- **§7.2 R2 admits an APPROVED out-of-workspace write and no V1 profile can
+  express one** (§8.2 binds the workspace and nothing else rw). Step 5 refuses it
+  as `workspace_scope` rather than leaving it to die as `EROFS`. Closing it is a
+  §7.2 or §8 SPEC change, not a dispatcher change.
+- **§6.4's `test.run` cannot be dispatched as catalogued** — it is `write_scoped`
+  with an argv and NO path argument, exactly the shape T3.02's guard refuses.
+  T3.06's boundary.
+- §7.5 step 6 stays **write-only** (SPEC:564), so read/exec tools report
+  `NOT_APPLICABLE` and their handlers must fstat-pin the opened inode (T3.04/T3.06).
+- §6.5 carries **one** `evidence` object, so a multi-path write tool can publish
+  only the first target's snapshot.
+- §6.5 has **no representation for "no process ran"**: a BLOCKED outcome reports
+  `exit_code=0` and lets `status=error` carry the meaning.
+- The child gets no `LC_ALL`/`TERM` even though §8.3 allows them, because T3.02
+  bound an `env_digest` computed without them.
+- §6.2 carries one `fs` capability per **tool**, so `_check_write_scope` cannot
+  tell a read path from a write path and refuses every out-of-workspace declared
+  path.
+
+### ⏭️ NEXT frontier
+Recompute the closure yourself. At `d4f12c7` the ready set is **T3.04** (read-only
+tool batch — the first task with real handlers, and the owner of the fstat-pinning
+obligation above), **T3.09**/**T3.11** (provider adapters), **T4.03** (audit
+reader), **T4.04**, **T4.07**, **T4.10**.
