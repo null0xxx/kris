@@ -15,7 +15,7 @@
 - **Gate:** 4 (implementation) — IN PROGRESS
 - **Source of truth for tasks:** `../IMPLEMENTATION_PLAN.md` (70 tasks, 6 phases)
 - **Repo:** `../lsassist` (branch `main`)
-- **Last updated:** 2026-07-27
+- **Last updated:** 2026-07-28
 
 ---
 
@@ -242,3 +242,75 @@ Recomputing the closure over `Depends on`: **T3.02** (dispatcher — the `tcb-pl
 freeze intent (9 fields verbatim) → read-only scout ground → pre-code human gate → **RED first** → elite-coder (Opus) in scope → deterministic floors at root (authoritative) → 3 isolated adversarial critics (Opus) → pure verdict (no LLM grades itself) → refine ≤2 (V7: any correctness/security defect forces 1 pass) → human Review checkpoint → commit `Tx.yy: …` → next. Weave/fan-out ONLY for ≥3-way file-disjoint splits.
 
 See `../PROJECT_STATE_ANALYSIS.md` for the full spec/plan/methodology brief.
+
+---
+
+## Phase 3/4 — Wave 2 (T3.02, T4.02), 2026-07-27/28
+
+Continued from the recomputed frontier, one task at a time, each RED-first and
+each put through an isolated adversarial round before commit.
+
+| Task | Verdict | Note |
+|---|---|---|
+| **T3.02** | **GREEN** (`b87dad3`) | `tools/dispatcher.py` — §6.3 steps 1-4. The FIRST TCB file inside `tools/`; the LOC manifest's `tcb-planned` row went RED the moment the file appeared, exactly as designed, and was flipped to `tcb`. The dispatcher decides nothing itself: `classify` owns the class, `canonicalize` the §7.5 boundary, `project_env` the child env, `TokenService` the token. |
+| **T4.02** | **GREEN** (`2ac1c0a`) | `audit/schema.py` + `audit/writer.py` — §14.1 append-only JSONL, hash chain, fsync policy, 50 MB/10-file rotation. Append-only is a DESCRIPTOR property (`O_APPEND`, asserted off the live fd); the chain continues across both rotation and writer restart; `verify_chain` never raises and names the broken record. |
+
+### 🔴 T3.02 — four isolated lenses converged INDEPENDENTLY on one CRITICAL
+
+**Step 3 classified the RAW request, not the normalized one.** §6.3 orders step 2
+(realpath, symlink-chain resolution) before step 3 precisely so policy judges the
+path that will be opened. `normalize()` canonicalized into a COPY and `dispatch()`
+then handed `classify()` the original. Measured:
+
+```
+control: fs.read ~/.ssh/id_rsa            -> BLOCKED / DENY_ALWAYS
+attack:  <ws>/notes.txt -> ~/.ssh/id_rsa  -> PROCEED / AUTO_READ
+         handler receives args={'path': '<home>/.ssh/id_rsa'}
+stronger, nothing outside the workspace needed:
+         <ws>/readme.md -> <ws>/.env      -> PROCEED / AUTO_READ
+```
+
+A symlink already present in a cloned repository is sufficient — no model action,
+no prompt. §7.3's DENY_ALWAYS is specified as absolute ("no approval can grant
+it") and degraded to AUTO with an audit entry naming AUTO_READ. This was recorded
+cross-phase obligation 1 left half-done: `workspace_root` was resolved, the TARGET
+was not — which made `rules.py`'s own docstring claim factually false.
+
+Also confirmed and fixed: a real approval token could NEVER verify (the rebuilt
+record re-stamped `issued_at`, which is inside `canonical_bytes()`, so the HMAC
+matched only in the second of minting — the whole §7.1 CONFIRM flow was unusable
+and `TokenVerdict.EXPIRED` was unreachable) · `ToolError.message_redacted` echoed
+the model-supplied argument verbatim via jsonschema (I8) · `env_digest` bound an
+environment no child ever gets · the model/wiring split was a SUBSTRING match on
+model-controlled text · `policy_rule_id` named the first rule that FIRED rather
+than the one that DENIED · plus five more MEDIUMs. **Two mutations survived the
+first attempt and were the most valuable of the run**: one showed a fix was
+INCOMPLETE, the other that a test was WEAK.
+
+### 🔴 T4.02 — the fuzz found a framing defect, and a test HUNG rather than failed
+
+**`str.splitlines()` breaks on more than `\n`.** U+0085, U+2028 and U+2029 are
+line boundaries, and `ensure_ascii=False` leaves exactly those three raw (measured
+— `json.dumps` already escapes every ASCII control character). One record
+containing U+2028 became TWO journal lines, the chain read MALFORMED, and one
+payload had silently become two. U+2028 is common in JavaScript-derived text and
+tool output is attacker-influenced.
+
+**A FIFO at a journal path hung the CONSTRUCTOR.** Resuming the chain reads the
+previous record first, and `_resume` used `Path.read_text()`: the WRITE path had
+been hardened and the READ path, which runs earlier, had not. Journal reads now
+use HARDEN-01's full pattern (`O_NOFOLLOW` + `O_NONBLOCK` + `fstat` + a size
+bound).
+
+### 🔖 Named residuals from Wave 2
+- **T3.02:** `create_if_missing` requires `fs=write_scoped`, but the manifest cannot tell `fs.write` (creates) from `fs.patch` (does not) — T3.04's boundary. A dangling path from the model propagates as a WIRING-class error; T3.03/T3.04 own the tool-level error kind. The token check is a PRE-FILTER: of `machine._g_valid_token`'s four conditions it checks the two it can see, and consent liveness plus the §4.7 replay verdict stay the kernel's.
+- **T4.02:** the chain is tamper-EVIDENT, not tamper-PROOF (no secret in the link; a full rewrite from the edit to the end is consistent). `payload_digest` binds the PRE-redaction payload — the same confirmation-oracle residual the redactor carries.
+- **Gate shape:** §23.1's 100% floor names PACKAGES and `tools/` is not one, so `tools/dispatcher.py` is measured by its own blocking `dispatcher-coverage` job; the `coverage` job keeps its "exactly one measurement" property, which is itself a gate.
+
+**Gate state after Wave 2:** pytest **2557 passed** · ruff clean · `mypy --strict` clean on 6 TCB packages + `tools/dispatcher.py` · **TCB LOC 4720 / 6000** · **100% branch on kernel+policy+sandbox+audit**, 0 partial, 0 pragmas · CI: 6 jobs.
+
+### ⏭️ NEXT frontier
+`T3.03` (dispatch steps 5-9 — now unblocked by T4.02) and `T4.03` (audit reader).
+T3.03 carries the recorded runner obligations from T2.06: `env={}` (never `None`),
+the argv LIST (never a shell string), the `prlimit` prefix, and bwrap missing →
+`sandbox_unavailable` → BLOCKED, never an unsandboxed fallback.
