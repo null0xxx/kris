@@ -642,6 +642,10 @@ def test_the_normalized_request_carries_no_llm_context(
         "env_digest",
         "action_hash",
         "argv",
+        # T3.03: §7.5 step 2's approval-time snapshot. Inode identities, not a
+        # channel — but the field set is closed ON PURPOSE, so adding to it is a
+        # reviewable act rather than something that slips in.
+        "path_snapshots",
     }
     for forbidden in ("messages", "prompt", "context", "transcript", "reasoning", "system"):
         assert forbidden not in fields

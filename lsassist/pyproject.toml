@@ -49,15 +49,17 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 
 # mypy --strict applies ONLY to TCB modules (SPEC §2.3 / §23.1):
-# kernel, policy, sandbox, audit, recovery, config, contracts — plus the ONE
-# TCB file inside an otherwise non-TCB package, `tools.dispatcher` (§2.3's
-# "tools/ dispatcher core (without individual handlers)"). It is named
-# individually rather than as `lsassist.tools.*` on purpose: the handlers and
-# the registry around it are non-TCB, and widening the pattern would quietly
+# kernel, policy, sandbox, audit, recovery, config, contracts — plus the TWO
+# TCB files inside an otherwise non-TCB package, `tools.dispatcher` and
+# `tools.result` (§2.3's "tools/ dispatcher core (without individual
+# handlers)"). They are named individually rather than as `lsassist.tools.*` on
+# purpose: the handlers and the registry around them are non-TCB, and widening
+# the pattern would quietly
 # promise a strictness the §2.3 boundary does not claim.
 [[tool.mypy.overrides]]
 module = [
     "lsassist.tools.dispatcher",
+    "lsassist.tools.result",
     "lsassist.kernel.*",
     "lsassist.policy.*",
     "lsassist.sandbox.*",

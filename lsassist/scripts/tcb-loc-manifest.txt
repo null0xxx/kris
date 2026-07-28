@@ -63,6 +63,12 @@ tcb-partial  src/lsassist/config        # §2.3 TCB = secrets resolver (whole pk
 # was tracked as `tcb-planned` until T3.02, and the gate worked exactly as
 # the line is flipped to `tcb`, and counts it in that failing run regardless.
 tcb          src/lsassist/tools/dispatcher.py   # §2.3 "tools/ dispatcher core"
+# T3.03. §6.5 result assembly: the output caps §6.2 calls KERNEL-enforced, and
+# the digests that are the kernel's I12 evidence. Not a handler, so §2.3's
+# "without individual handlers" carve-out does not reach it — and leaving it
+# under the `non-tcb src/lsassist/tools` row below would be residual 3 of this
+# file's own list (TCB logic in a non-TCB package that the TCB then imports).
+tcb          src/lsassist/tools/result.py       # §2.3 "tools/ dispatcher core"
 
 # ---------------------------------------------------------------------------
 # Outside the TCB — SPEC §2.3: "providers (output must be validated), cli

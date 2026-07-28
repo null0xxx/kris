@@ -96,13 +96,25 @@ TCB_PACKAGES = (
     "src/lsassist/audit",
 )
 
-#: What the CI pragma step must SCAN. Wider than TCB_PACKAGES by exactly one
-#: entry: `tools/dispatcher.py` is TCB per SPEC §2.3 ("tools/ dispatcher core")
-#: while `tools/` as a package is not, so §23.1's package-shaped 100% floor does
-#: not reach it but §23.1's no-pragma rule does. A separate `dispatcher-coverage`
-#: CI job carries its 100% branch measurement, kept out of the `coverage` job so
-#: that job keeps its "exactly one measurement" property.
-TCB_PRAGMA_TARGETS = (*TCB_PACKAGES, "src/lsassist/tools/dispatcher.py")
+#: What the CI pragma step must SCAN. Wider than TCB_PACKAGES by exactly the two
+#: FILES that are TCB per SPEC §2.3 ("tools/ dispatcher core") inside a package
+#: that is not: §23.1's package-shaped 100% floor does not reach them, but
+#: §23.1's no-pragma rule does. `result.py` joined at T3.03 — it holds §6.5's
+#: assembly, i.e. the output caps §6.2 calls kernel-enforced and the digests that
+#: are the kernel's I12 evidence. A separate `dispatcher-coverage` CI job carries
+#: their 100% branch measurement, kept out of the `coverage` job so that job
+#: keeps its "exactly one measurement" property.
+TCB_PRAGMA_TARGETS = (
+    *TCB_PACKAGES,
+    "src/lsassist/tools/dispatcher.py",
+    "src/lsassist/tools/result.py",
+)
+
+#: What the `dispatcher-coverage` job must MEASURE, as coverage module paths.
+#: Pinned separately from the pragma targets: a file could be scanned for
+#: pragmas and still have no 100%-branch floor, which is the quieter of the two
+#: ways to lose a gate.
+DISPATCHER_COVERAGE_SOURCES = ("lsassist.tools.dispatcher", "lsassist.tools.result")
 
 #: ``coverage report`` exits 2 when the total is below ``fail_under``.
 EXIT_OK = 0
@@ -595,7 +607,21 @@ def test_emptying_both_partial_lists_makes_the_gate_vacuous(tmp_path: Path) -> N
 #: cannot be removed quietly. `dispatcher-coverage` joined at T3.02 — see
 #: TCB_PRAGMA_TARGETS for why it is a separate job and not another step inside
 #: `coverage`.
-CI_JOBS = ("ruff", "unit", "loc-count", "tcb-loc", "coverage", "dispatcher-coverage")
+CI_JOBS = (
+    "ruff",
+    "unit",
+    "loc-count",
+    "tcb-loc",
+    "coverage",
+    "dispatcher-coverage",
+    # T3.03. `tests/integration` and `tests/e2e` assert what only a REAL spawn
+    # can show — that the workspace bind is the only writable path, that the host
+    # is absent from the mount view, that a timeout kills the GROUP. Until this
+    # job existed no CI job ran either layer, which is the same defect the Wave-1
+    # seam critic found in `tests/contract/`: a gate nobody executes. The job
+    # installs bubblewrap, because a suite that skips is not a gate either.
+    "integration",
+)
 
 
 def test_ci_yaml_is_json_with_the_expected_jobs() -> None:
@@ -605,15 +631,23 @@ def test_ci_yaml_is_json_with_the_expected_jobs() -> None:
     assert set(jobs) == set(CI_JOBS), f"expected {sorted(CI_JOBS)}, got {sorted(jobs)}"
 
 
-def test_the_dispatcher_coverage_job_measures_the_one_tcb_file_outside_the_floor() -> None:
+def test_the_dispatcher_coverage_job_measures_every_tcb_file_outside_the_floor() -> None:
     """§23.1's 100% floor names PACKAGES, and `tools/` is not one of them — but
-    `tools/dispatcher.py` IS TCB per §2.3. It is measured by its own blocking
+    two FILES inside it are TCB per §2.3. They are measured by their own blocking
     job rather than by a second step inside `coverage`, because that job's
     "exactly one measurement" property is itself a gate (a second `coverage run`
-    there could quietly become the one that reports)."""
+    there could quietly become the one that reports).
+
+    The scope is compared as a SET, not by substring: `--source=…dispatcher`
+    passes a substring check even when `…,lsassist.tools.result` has been dropped
+    from the end of it, and a TCB file measured by nothing is exactly what this
+    job exists to prevent.
+    """
     steps = _steps(_jobs()["dispatcher-coverage"])
     script = " ".join(str(step.get("run", "")) for step in steps)
-    assert "--source=lsassist.tools.dispatcher" in script
+    match = re.search(r"--source=(\S+)", script)
+    assert match, f"the dispatcher-coverage job passes no --source: {script!r}"
+    assert set(match.group(1).split(",")) == set(DISPATCHER_COVERAGE_SOURCES)
     assert "coverage report" in script
     assert "--fail-under" not in script, "the floor lives in pyproject.toml, not on the CLI"
 
@@ -670,8 +704,29 @@ def test_every_test_layer_that_carries_a_gate_is_executed_by_ci() -> None:
     commands = " ".join(
         str(step.get("run", "")) for job in _jobs().values() for step in _steps(job)
     )
-    for layer in ("tests/unit", "tests/property", "tests/contract"):
+    for layer in ("tests/unit", "tests/property", "tests/contract", "tests/integration",
+                  "tests/e2e"):
         assert layer in commands, f"no CI job runs {layer}; its gates never execute"
+
+
+def test_the_integration_job_is_bounded_and_installs_the_sandbox() -> None:
+    """Two ways this job could stop being a gate, both pinned.
+
+    It could SKIP: every sandbox case in ``tests/integration/tools`` is guarded by
+    ``shutil.which("bwrap")``, so on a runner without bubblewrap the job would go
+    green having asserted nothing.
+
+    Or it could HANG: T3.03 measured a real defect where a child closed both
+    pipes and the runner waited past its own deadline. Without
+    ``timeout-minutes`` a recurrence would burn up to GitHub's 360-minute default
+    instead of failing, which is the same "a hang is worse than a failure" lesson
+    T4.02's FIFO taught.
+    """
+    job = _jobs()["integration"]
+    script = " ".join(str(step.get("run", "")) for step in _steps(job))
+    assert "bubblewrap" in script, "the job would skip every sandbox case"
+    assert "timeout-minutes" in job, "an unbounded job cannot fail on a hang"
+    assert int(job["timeout-minutes"]) <= 30
 
 
 def test_coverage_job_report_does_not_override_fail_under() -> None:

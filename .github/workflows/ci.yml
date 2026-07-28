@@ -106,7 +106,7 @@
         },
         {
           "name": "no coverage pragma in the TCB (SPEC §23.1, T2.13 review checkpoint)",
-          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py; do\n  test -e \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
+          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py src/lsassist/tools/result.py; do\n  test -e \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py src/lsassist/tools/result.py; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
         },
         {
           "uses": "actions/setup-python@v5",
@@ -159,8 +159,42 @@
           "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
         },
         {
-          "name": "100% branch on the one TCB file inside a non-TCB package (SPEC §2.3)",
-          "run": ".venv/bin/python -m coverage run --branch --source=lsassist.tools.dispatcher -m pytest tests/unit/tools -q && .venv/bin/python -m coverage report --show-missing"
+          "name": "100% branch on the TCB files inside a non-TCB package (SPEC §2.3)",
+          "run": ".venv/bin/python -m coverage run --branch --source=lsassist.tools.dispatcher,lsassist.tools.result -m pytest tests/unit/tools -q && .venv/bin/python -m coverage report --show-missing"
+        }
+      ]
+    },
+    "integration": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 15,
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-python@v5",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
+        {
+          "uses": "actions/cache@v4",
+          "with": {
+            "path": "~/.cache/pip",
+            "key": "pip-${{ hashFiles('lsassist/requirements.lock', 'lsassist/requirements-dev.lock') }}"
+          }
+        },
+        {
+          "name": "bubblewrap (the sandbox under test; without it every case skips)",
+          "run": "sudo apt-get update && sudo apt-get install -y bubblewrap"
+        },
+        {
+          "name": "install (hashes enforced, ADR-005)",
+          "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
+        },
+        {
+          "name": "sandbox boundary tests that must SPAWN (SPEC §8.3, I11)",
+          "run": ".venv/bin/pytest tests/integration tests/e2e -q"
         }
       ]
     }
