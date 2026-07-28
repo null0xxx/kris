@@ -96,6 +96,14 @@ TCB_PACKAGES = (
     "src/lsassist/audit",
 )
 
+#: What the CI pragma step must SCAN. Wider than TCB_PACKAGES by exactly one
+#: entry: `tools/dispatcher.py` is TCB per SPEC §2.3 ("tools/ dispatcher core")
+#: while `tools/` as a package is not, so §23.1's package-shaped 100% floor does
+#: not reach it but §23.1's no-pragma rule does. A separate `dispatcher-coverage`
+#: CI job carries its 100% branch measurement, kept out of the `coverage` job so
+#: that job keeps its "exactly one measurement" property.
+TCB_PRAGMA_TARGETS = (*TCB_PACKAGES, "src/lsassist/tools/dispatcher.py")
+
 #: ``coverage report`` exits 2 when the total is below ``fail_under``.
 EXIT_OK = 0
 
@@ -582,11 +590,32 @@ def test_emptying_both_partial_lists_makes_the_gate_vacuous(tmp_path: Path) -> N
 # ==========================================================================
 # 4. CI wiring
 # ==========================================================================
-def test_ci_yaml_is_json_with_five_jobs() -> None:
+#: Every job the workflow must carry. Named rather than counted: a count says
+#: nothing about WHICH job vanished, and the point of this test is that a gate
+#: cannot be removed quietly. `dispatcher-coverage` joined at T3.02 — see
+#: TCB_PRAGMA_TARGETS for why it is a separate job and not another step inside
+#: `coverage`.
+CI_JOBS = ("ruff", "unit", "loc-count", "tcb-loc", "coverage", "dispatcher-coverage")
+
+
+def test_ci_yaml_is_json_with_the_expected_jobs() -> None:
     """PyYAML is deliberately not a dependency (T2.12); the workflow is written
     in the JSON subset of YAML so it can be validated with the stdlib."""
     jobs = _jobs()
-    assert len(jobs) == 5, f"expected 5 jobs, got {sorted(jobs)}"
+    assert set(jobs) == set(CI_JOBS), f"expected {sorted(CI_JOBS)}, got {sorted(jobs)}"
+
+
+def test_the_dispatcher_coverage_job_measures_the_one_tcb_file_outside_the_floor() -> None:
+    """§23.1's 100% floor names PACKAGES, and `tools/` is not one of them — but
+    `tools/dispatcher.py` IS TCB per §2.3. It is measured by its own blocking
+    job rather than by a second step inside `coverage`, because that job's
+    "exactly one measurement" property is itself a gate (a second `coverage run`
+    there could quietly become the one that reports)."""
+    steps = _steps(_jobs()["dispatcher-coverage"])
+    script = " ".join(str(step.get("run", "")) for step in steps)
+    assert "--source=lsassist.tools.dispatcher" in script
+    assert "coverage report" in script
+    assert "--fail-under" not in script, "the floor lives in pyproject.toml, not on the CLI"
 
 
 def test_ci_keeps_the_four_pre_existing_jobs() -> None:
@@ -705,11 +734,15 @@ def _run_pragma_step(cwd: Path) -> subprocess.CompletedProcess[str]:
 
 def _tcb_shaped_tree(tmp_path: Path, planted: dict[str, str], *, skip: str = "") -> Path:
     root = tmp_path / "tree"
-    for package in TCB_PACKAGES:
-        if package.endswith(skip) and skip:
+    for target in TCB_PRAGMA_TARGETS:
+        if skip and target.endswith(skip):
             continue
-        (root / package).mkdir(parents=True)
-        (root / package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+        if target.endswith(".py"):
+            (root / target).parent.mkdir(parents=True, exist_ok=True)
+            (root / target).write_text("x = 1\n", encoding="utf-8")
+            continue
+        (root / target).mkdir(parents=True, exist_ok=True)
+        (root / target / "__init__.py").write_text("x = 1\n", encoding="utf-8")
     for rel, body in planted.items():
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -719,8 +752,11 @@ def _tcb_shaped_tree(tmp_path: Path, planted: dict[str, str], *, skip: str = "")
 
 def test_ci_has_a_pragma_grep_step() -> None:
     script = _pragma_step()
-    for package in TCB_PACKAGES:
-        assert package in script, f"the pragma grep does not scan {package}"
+    for target in TCB_PRAGMA_TARGETS:
+        assert script.count(target) >= 2, (
+            f"{target} must appear in BOTH the existence loop and the grep arguments; "
+            "the two lists moving separately is how the gate failed open before"
+        )
 
 
 def test_pragma_grep_is_silent_on_a_clean_tree(tmp_path: Path) -> None:
@@ -739,7 +775,7 @@ def test_pragma_grep_is_silent_on_a_clean_tree(tmp_path: Path) -> None:
         "# pragma:no cover",
     ],
 )
-@pytest.mark.parametrize("package", TCB_PACKAGES)
+@pytest.mark.parametrize("package", TCB_PRAGMA_TARGETS)
 def test_pragma_grep_fires_on_a_planted_pragma(tmp_path: Path, pragma: str, package: str) -> None:
     """Proof the grep actually fires — every spelling, in EVERY TCB package.
 
@@ -747,16 +783,15 @@ def test_pragma_grep_fires_on_a_planted_pragma(tmp_path: Path, pragma: str, pack
     package: dropping ``src/lsassist/audit`` from it (while leaving it in the
     ``test -d`` loop) failed open with the whole suite green. Reproduced.
     """
-    root = _tcb_shaped_tree(
-        tmp_path, {f"{package}/planted.py": f"def f():\n    return 1  {pragma}\n"}
-    )
-    result = _run_pragma_step(root)
+    body = f"def f():\n    return 1  {pragma}\n"
+    planted = {package: body} if package.endswith(".py") else {f"{package}/planted.py": body}
+    result = _run_pragma_step(_tcb_shaped_tree(tmp_path, planted))
     assert result.returncode != EXIT_OK, (
         f"the grep did not fire on {pragma!r} in {package}:\n{result.stdout}\n{result.stderr}"
     )
 
 
-@pytest.mark.parametrize("package", TCB_PACKAGES)
+@pytest.mark.parametrize("package", TCB_PRAGMA_TARGETS)
 def test_pragma_grep_fails_closed_when_a_tcb_package_is_missing(
     tmp_path: Path, package: str
 ) -> None:

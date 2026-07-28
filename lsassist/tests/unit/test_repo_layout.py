@@ -78,10 +78,23 @@ def test_loc_count_executable_and_empty_tree_zero(tmp_path: Path) -> None:
     assert script.is_file(), "scripts/loc-count missing"
     assert os.access(script, os.X_OK), "scripts/loc-count is not executable"
 
-    # Empty tree: all TCB package dirs present but containing no code.
+    # Empty tree: every unit the manifest declares as counted-and-must-exist is
+    # present but contains no code. Derived FROM the manifest rather than
+    # hard-coded, so adding a TCB unit (T3.02 added the file-level
+    # `src/lsassist/tools/dispatcher.py` row) does not silently redden a T1.02
+    # test that was only ever asserting "no code means no LOC".
     empty_root = tmp_path / "empty-tree"
-    for pkg in ["kernel", "policy", "sandbox", "audit", "recovery", "config", "contracts"]:
-        (empty_root / "src" / "lsassist" / pkg).mkdir(parents=True)
+    manifest = (REPO_ROOT / "scripts" / "tcb-loc-manifest.txt").read_text(encoding="utf-8")
+    for line in manifest.splitlines():
+        stripped = line.split("#", 1)[0].split()
+        if len(stripped) != 2 or stripped[0] not in {"tcb", "tcb-partial"}:
+            continue
+        target = empty_root / stripped[1]
+        if target.suffix == ".py":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("", encoding="utf-8")
+        else:
+            target.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [str(script), "--root", str(empty_root)],
         capture_output=True,

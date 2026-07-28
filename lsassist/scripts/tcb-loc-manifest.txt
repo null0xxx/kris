@@ -60,9 +60,9 @@ tcb-partial  src/lsassist/config        # §2.3 TCB = secrets resolver (whole pk
 
 # Not built yet. `tools/` as a package is NOT TCB (handlers are read as untrusted
 # per §2.3), but the dispatcher core inside it IS. It does not exist today, so it
-# is tracked as `tcb-planned`: the gate fails the moment this path appears until
+# was tracked as `tcb-planned` until T3.02, and the gate worked exactly as
 # the line is flipped to `tcb`, and counts it in that failing run regardless.
-tcb-planned  src/lsassist/tools/dispatcher.py   # §2.3 "tools/ dispatcher core"
+tcb          src/lsassist/tools/dispatcher.py   # §2.3 "tools/ dispatcher core"
 
 # ---------------------------------------------------------------------------
 # Outside the TCB — SPEC §2.3: "providers (output must be validated), cli

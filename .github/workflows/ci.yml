@@ -1,13 +1,27 @@
 {
   "name": "ci",
-  "on": ["push", "pull_request"],
-  "defaults": {"run": {"working-directory": "lsassist"}},
+  "on": [
+    "push",
+    "pull_request"
+  ],
+  "defaults": {
+    "run": {
+      "working-directory": "lsassist"
+    }
+  },
   "jobs": {
     "ruff": {
       "runs-on": "ubuntu-latest",
       "steps": [
-        {"uses": "actions/checkout@v4"},
-        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}},
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-python@v5",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
         {
           "uses": "actions/cache@v4",
           "with": {
@@ -19,14 +33,24 @@
           "name": "install (hashes enforced, ADR-005)",
           "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock"
         },
-        {"name": "ruff", "run": ".venv/bin/ruff check src tests"}
+        {
+          "name": "ruff",
+          "run": ".venv/bin/ruff check src tests"
+        }
       ]
     },
     "unit": {
       "runs-on": "ubuntu-latest",
       "steps": [
-        {"uses": "actions/checkout@v4"},
-        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}},
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-python@v5",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
         {
           "uses": "actions/cache@v4",
           "with": {
@@ -38,21 +62,36 @@
           "name": "install (hashes enforced, ADR-005)",
           "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
         },
-        {"name": "unit + contract tests", "run": ".venv/bin/pytest tests/unit tests/contract -q"}
+        {
+          "name": "unit + contract tests",
+          "run": ".venv/bin/pytest tests/unit tests/contract -q"
+        }
       ]
     },
     "loc-count": {
       "runs-on": "ubuntu-latest",
       "steps": [
-        {"uses": "actions/checkout@v4"},
-        {"name": "TCB LOC budget (SPEC §2.3)", "run": "scripts/loc-count"}
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "name": "TCB LOC budget (SPEC §2.3)",
+          "run": "scripts/loc-count"
+        }
       ]
     },
     "tcb-loc": {
       "runs-on": "ubuntu-latest",
       "steps": [
-        {"uses": "actions/checkout@v4"},
-        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}},
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-python@v5",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
         {
           "name": "TCB LOC checkpoint gate (SPEC §2.3: target 6000, hard stop 8000)",
           "run": "python3 scripts/loc-count --manifest scripts/tcb-loc-manifest.txt --target 6000 --hard-stop 8000"
@@ -62,12 +101,19 @@
     "coverage": {
       "runs-on": "ubuntu-latest",
       "steps": [
-        {"uses": "actions/checkout@v4"},
+        {
+          "uses": "actions/checkout@v4"
+        },
         {
           "name": "no coverage pragma in the TCB (SPEC §23.1, T2.13 review checkpoint)",
-          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit; do\n  test -d \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
+          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py; do\n  test -e \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
         },
-        {"uses": "actions/setup-python@v5", "with": {"python-version": "3.12"}},
+        {
+          "uses": "actions/setup-python@v5",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
         {
           "uses": "actions/cache@v4",
           "with": {
@@ -86,6 +132,35 @@
         {
           "name": "100% branch floor - blocking (SPEC §23.1; fail_under lives in pyproject.toml)",
           "run": ".venv/bin/python -m coverage report --show-missing"
+        }
+      ]
+    },
+    "dispatcher-coverage": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-python@v5",
+          "with": {
+            "python-version": "3.12"
+          }
+        },
+        {
+          "uses": "actions/cache@v4",
+          "with": {
+            "path": "~/.cache/pip",
+            "key": "pip-${{ hashFiles('lsassist/requirements.lock', 'lsassist/requirements-dev.lock') }}"
+          }
+        },
+        {
+          "name": "install (hashes enforced, ADR-005)",
+          "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
+        },
+        {
+          "name": "100% branch on the one TCB file inside a non-TCB package (SPEC §2.3)",
+          "run": ".venv/bin/python -m coverage run --branch --source=lsassist.tools.dispatcher -m pytest tests/unit/tools -q && .venv/bin/python -m coverage report --show-missing"
         }
       ]
     }
