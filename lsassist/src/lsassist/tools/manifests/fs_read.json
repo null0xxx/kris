@@ -1,0 +1,60 @@
+{
+  "name": "fs.read",
+  "version": "1.0.0",
+  "purpose": "Read one file inside the workspace and return its content as utf-8 (errors=replace) or, for binary content, a hex head.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path"],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["content", "encoding", "bytes_read", "truncated"],
+    "properties": {
+      "content": {
+        "type": "string"
+      },
+      "encoding": {
+        "type": "string",
+        "enum": ["utf-8", "hex"]
+      },
+      "bytes_read": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    }
+  },
+  "permission_class": "AUTO_READ",
+  "capabilities": {
+    "fs": "read_scoped",
+    "net": "none",
+    "proc": "none"
+  },
+  "timeout_s": 10,
+  "output_limits": {
+    "max_stdout_bytes": 200000,
+    "max_stderr_bytes": 65536,
+    "max_result_chars": 200000
+  },
+  "concurrency": "shared_read",
+  "idempotent": true,
+  "dry_run": false,
+  "rollback": "none",
+  "redaction": ["paths", "secrets"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_readonly_tools.py",
+    "tests/integration/tools/test_readonly_sandbox.py"
+  ]
+}

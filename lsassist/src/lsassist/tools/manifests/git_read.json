@@ -1,0 +1,66 @@
+{
+  "name": "git.read",
+  "version": "1.0.0",
+  "purpose": "Read repository state through a fixed subcommand allowlist: status, diff, log, branch or worktree list; the repository is the workspace.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["subcommand"],
+    "properties": {
+      "subcommand": {
+        "type": "string",
+        "enum": ["status", "diff", "log", "branch", "worktree"]
+      },
+      "cached": {
+        "type": "boolean"
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "count": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["stdout", "exit_code"],
+    "properties": {
+      "stdout": {
+        "type": "string"
+      },
+      "exit_code": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 255
+      }
+    }
+  },
+  "permission_class": "AUTO_READ",
+  "capabilities": {
+    "fs": "read_scoped",
+    "net": "none",
+    "proc": "spawn_argv"
+  },
+  "timeout_s": 20,
+  "output_limits": {
+    "max_stdout_bytes": 200000,
+    "max_stderr_bytes": 65536,
+    "max_result_chars": 200000
+  },
+  "concurrency": "shared_read",
+  "idempotent": true,
+  "dry_run": false,
+  "rollback": "none",
+  "redaction": ["paths", "secrets"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_readonly_tools.py",
+    "tests/integration/tools/test_readonly_sandbox.py"
+  ]
+}

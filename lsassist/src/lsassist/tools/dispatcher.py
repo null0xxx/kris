@@ -74,6 +74,7 @@ the failure would be silent and would look like a working tool.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import datetime
 import hashlib
 import os
@@ -128,6 +129,7 @@ from lsassist.sandbox.availability import (
     probe as sandbox_probe,
 )
 from lsassist.sandbox.env import DEFAULT_PATH, EnvProjectionError, project_env
+from lsassist.tools.handlers import Handler, HandlerContext, HandlerRefused
 from lsassist.tools.result import (
     ExecObservation,
     OutputSink,
@@ -190,6 +192,20 @@ WORKSPACE_SCOPE: Final = "workspace_scope"
 
 #: §6.3 step 8: the handler's ``result`` violates the manifest's output schema.
 MALFORMED_TOOL_RESULT: Final = "malformed_tool_result"
+
+#: The in-process route was selected by the manifest (``capabilities.proc =
+#: none``, §6.4) but its preconditions do not hold: no ``handler`` was supplied,
+#: or an ``argv`` was — and an argv nobody executes would put a command line into
+#: the §14.1 record that never ran. Both are caller-wiring faults, and both fail
+#: CLOSED: a ``proc: none`` tool never falls back to spawning something.
+HANDLER_UNAVAILABLE: Final = "handler_unavailable"
+
+#: The handler RAN and failed in a way it did not model — an ``OSError``, a
+#: non-Mapping return, a bug. Deliberately NOT :data:`HANDLER_UNAVAILABLE`:
+#: that one means the call was wired wrong and will fail identically every
+#: time, while this one is data-dependent and may never recur. Collapsing both
+#: into one reason code is what makes a §14.1 record useless to triage from.
+HANDLER_FAILED: Final = "handler_failed"
 
 #: The §8.3 boundary flags, asserted on the COMPOSED argv immediately before the
 #: spawn. ``availability.py`` says it plainly: the receipt is defense in depth
@@ -1583,6 +1599,8 @@ def run(
     probe_fn: Callable[[], SandboxAvailable] = sandbox_probe,
     runner: Callable[..., ExecObservation] = spawn_capped,
     result_of: Callable[[ExecObservation], Mapping[str, Any]] = _no_result,
+    handler: Handler | None = None,
+    canary_paths: frozenset[str] = frozenset(),
     fs_view: FsView | None = None,
     now: datetime.datetime | None = None,
 ) -> ExecOutcome:
@@ -1618,10 +1636,19 @@ def run(
     view = fs_view or OsFsView()
     profile = profile_for(manifest)
 
-    def blocked(kind: str, detail: str) -> ExecOutcome:
+    def blocked(kind: str, detail: str, *, ran_ns: int = 0) -> ExecOutcome:
+        # `ran_ns` is 0 for every refusal decided BEFORE anything executed, which
+        # is what `_NOTHING_RAN` describes. The in-process route is the one case
+        # where a refusal can arrive AFTER real work — a deadline is only
+        # reachable by having spent it — and reporting that as 0 would erase the
+        # single piece of evidence a timeout produces.
         result = build_result(
             tool=normalized.tool,
-            observation=_NOTHING_RAN,
+            observation=(
+                _NOTHING_RAN
+                if ran_ns <= 0
+                else dataclasses.replace(_NOTHING_RAN, duration_ms=ran_ns // 1_000_000)
+            ),
             result={},
             error=ToolError(kind=kind, message_redacted=detail),
         )
@@ -1656,45 +1683,129 @@ def run(
     if verdict is not RecheckVerdict.VALID:
         return blocked(PATH_INVALIDATED, f"§7.5 step 3 re-canonicalization: {verdict.value}")
 
-    # §6.3 step 5.
-    try:
-        composed = build_exec_argv(
-            normalized=normalized,
-            manifest=manifest,
-            environment=environment,
-            available=probe_fn(),
-            cache_dir=cache_dir,
-            argv=argv,
+    # §6.3 steps 5-7. TWO ROUTES, and the MANIFEST picks — never the caller.
+    #
+    # §6.4 gives `fs.read`, `fs.list` and `fs.find` `capabilities.proc = none`:
+    # they create no process, so there is nothing for bwrap to isolate and their
+    # protection is the path chain (canonicalization, workspace scope, §7.3,
+    # `O_NOFOLLOW` + a parent `dir_fd`, and the §7.5 step-6 inode pin the handler
+    # itself applies). Keying this branch on `capabilities.proc` rather than on
+    # "was a handler passed?" is load-bearing: the latter would let any caller
+    # turn a `spawn_argv` tool into an unsandboxed in-process call simply by
+    # supplying one.
+    #
+    # `proc: none` is NECESSARY but not SUFFICIENT: §6.4 also gives `fs.write`
+    # and `fs.patch` `write_scoped / none / none`, and T3.03 already routes those
+    # through the `ws` sandbox. Requiring a wired handler as well keeps this
+    # branch strictly ADDITIVE — no existing tool changes route because a new
+    # condition appeared — while the `proc` test alone still makes it impossible
+    # for any `spawn_argv` tool to be diverted in-process by a caller. A
+    # `proc: none` tool with no handler is not silently un-sandboxed either: it
+    # falls through to the spawn route with an empty argv, which `checked_argv`
+    # refuses, so the outcome is still BLOCKED.
+    if manifest.capabilities.proc is ProcCapability.NONE and handler is not None:
+        if argv:
+            return blocked(
+                HANDLER_UNAVAILABLE,
+                f"{manifest.name} runs in-process; an argv would be recorded but never run",
+            )
+        started_ns = time.monotonic_ns()
+        try:
+            payload = dict(
+                handler(
+                    HandlerContext(
+                        normalized=normalized,
+                        manifest=manifest,
+                        environment=environment,
+                        canary_paths=canary_paths,
+                        # The spawn route's budget is enforced by the runner's own
+                        # clock. Nothing kills an in-process handler, so it is
+                        # handed the deadline and required to consult it; without
+                        # this, `timeout_s` was recorded in the manifest and
+                        # honoured by nothing.
+                        deadline=time.monotonic() + manifest.timeout_s,
+                    )
+                )
+            )
+        except HandlerRefused as exc:
+            # A typed refusal is an EVENT, not an exception to lose: §19's canary
+            # alert arrives this way, and it has to reach step 9's journal like
+            # every other blocked outcome. The elapsed time travels WITH it: a
+            # refusal that burned the whole budget and one that failed instantly
+            # are different operational events, and `blocked()`'s `_NOTHING_RAN`
+            # reported both as `duration_ms=0` — discarding the only evidence a
+            # timeout ever produces.
+            return blocked(exc.kind, exc.detail, ran_ns=time.monotonic_ns() - started_ns)
+        # Broad on purpose, and for the same reason every other broad `except` in
+        # this file is: §6.3 step 9 must journal EVERY outcome. A handler that
+        # raises an OSError, returns a non-Mapping, or fails any other way is a
+        # refusal like all the rest — letting it escape `run()` produces no
+        # ToolResult and no record at all, which is the one outcome the pipeline
+        # may never have.
+        except Exception as exc:
+            return blocked(
+                HANDLER_FAILED,
+                f"{manifest.name} handler failed: {exc!r}",
+                ran_ns=time.monotonic_ns() - started_ns,
+            )
+        observation = dataclasses.replace(
+            _NOTHING_RAN, duration_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
-    except SandboxUnavailable as exc:
-        # §8.3: BLOCKED, and there is no other branch. Catching this and running
-        # the tool anyway is precisely the unsandboxed execution I11 forbids.
-        return blocked(SANDBOX_UNAVAILABLE, exc.detail)
-    except ExecRefused as exc:
-        return blocked(exc.kind, str(exc))
+    else:
+        if not argv:
+            # A wiring fault, and the ONLY branch here that has to state it:
+            # `build_exec_argv` documents that it raises `SandboxProfileError`
+            # for a structurally invalid argv, and `run` does not catch that
+            # type — so an empty argv escaped past step 9 with no ToolResult and
+            # no journal entry at all. Reachable two ways: a `proc: none` tool
+            # whose handler was never wired, and any caller that simply forgot
+            # the argv. NAMED RESIDUAL: the other `SandboxProfileError` shapes
+            # (a masked cache dir, a workspace under /tmp) still escape; closing
+            # those is a change to T3.03's spawn route, not to T3.04's.
+            return blocked(
+                HANDLER_UNAVAILABLE,
+                f"{manifest.name} was given no argv and no in-process handler",
+            )
+        try:
+            composed = build_exec_argv(
+                normalized=normalized,
+                manifest=manifest,
+                environment=environment,
+                available=probe_fn(),
+                cache_dir=cache_dir,
+                argv=argv,
+            )
+        except SandboxUnavailable as exc:
+            # §8.3: BLOCKED, and there is no other branch. Catching this and
+            # running the tool anyway is precisely the unsandboxed execution I11
+            # forbids.
+            return blocked(SANDBOX_UNAVAILABLE, exc.detail)
+        except ExecRefused as exc:
+            return blocked(exc.kind, str(exc))
 
-    # §6.3 steps 6-7. `composed` came from `build_exec_argv`, which already
-    # refused any argv missing the §8.3 flags, and nothing between there and here
-    # touches it — so the list handed to the runner is the list that was checked.
-    try:
-        observation = runner(
-            composed,
-            timeout_s=manifest.timeout_s,
-            stdout_cap=manifest.output_limits.max_stdout_bytes,
-            stderr_cap=manifest.output_limits.max_stderr_bytes,
-        )
-    except DispatchError as exc:
-        # §8.3 names this case exactly: "bwrap spawn failure → typed error
-        # `sandbox_unavailable` → exec tool BLOCKED". `Popen` raising means NO
-        # child was created, so this is a refusal like every other one here and
-        # belongs in the journal — not an exception escaping past step 9. The
-        # measured trigger is not exotic: `fork` returns EAGAIN under RLIMIT_NPROC
-        # pressure, which is the same limit HARDEN-03 already watched break the
-        # whole exec path on this host.
-        return blocked(SANDBOX_UNAVAILABLE, str(exc))
+        # `composed` came from `build_exec_argv`, which already refused any argv
+        # missing the §8.3 flags, and nothing between there and here touches it —
+        # so the list handed to the runner is the list that was checked.
+        try:
+            observation = runner(
+                composed,
+                timeout_s=manifest.timeout_s,
+                stdout_cap=manifest.output_limits.max_stdout_bytes,
+                stderr_cap=manifest.output_limits.max_stderr_bytes,
+            )
+        except DispatchError as exc:
+            # §8.3 names this case exactly: "bwrap spawn failure → typed error
+            # `sandbox_unavailable` → exec tool BLOCKED". `Popen` raising means NO
+            # child was created, so this is a refusal like every other one here
+            # and belongs in the journal — not an exception escaping past step 9.
+            # The measured trigger is not exotic: `fork` returns EAGAIN under
+            # RLIMIT_NPROC pressure, which is the same limit HARDEN-03 already
+            # watched break the whole exec path on this host.
+            return blocked(SANDBOX_UNAVAILABLE, str(exc))
+        payload = dict(result_of(observation))
 
-    # §6.3 step 8.
-    payload = dict(result_of(observation))
+    # §6.3 step 8 — shared by both routes, so there is exactly ONE place where a
+    # result is schema-checked, capped and (below) journalled.
     error = _validate_result(manifest, payload)
     try:
         capped, result_truncated = cap_result(payload, manifest.output_limits.max_result_chars)

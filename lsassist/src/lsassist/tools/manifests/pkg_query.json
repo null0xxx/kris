@@ -1,0 +1,59 @@
+{
+  "name": "pkg.query",
+  "version": "1.0.0",
+  "purpose": "Query installed packages through a fixed argv allowlist: dpkg-query -W, apt-cache show, or pip list in the workspace venv.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["action"],
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["dpkg_query", "apt_cache_show", "pip_list"]
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9+._:-]+$"
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["stdout", "exit_code"],
+    "properties": {
+      "stdout": {
+        "type": "string"
+      },
+      "exit_code": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 255
+      }
+    }
+  },
+  "permission_class": "AUTO_READ",
+  "capabilities": {
+    "fs": "none",
+    "net": "none",
+    "proc": "spawn_argv"
+  },
+  "timeout_s": 20,
+  "output_limits": {
+    "max_stdout_bytes": 100000,
+    "max_stderr_bytes": 65536,
+    "max_result_chars": 100000
+  },
+  "concurrency": "shared_read",
+  "idempotent": true,
+  "dry_run": false,
+  "rollback": "none",
+  "redaction": ["secrets"],
+  "path_scope": "system_read",
+  "tests": [
+    "tests/unit/tools/test_readonly_tools.py",
+    "tests/integration/tools/test_readonly_sandbox.py"
+  ]
+}

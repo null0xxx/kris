@@ -1,0 +1,53 @@
+{
+  "name": "sys.info",
+  "version": "1.0.0",
+  "purpose": "Report host facts through a fixed argv allowlist: uname -a, lscpu, free -h, df -h, or the os-release file.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["query"],
+    "properties": {
+      "query": {
+        "type": "string",
+        "enum": ["uname", "lscpu", "free", "df", "os_release"]
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["stdout", "exit_code"],
+    "properties": {
+      "stdout": {
+        "type": "string"
+      },
+      "exit_code": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 255
+      }
+    }
+  },
+  "permission_class": "AUTO_READ",
+  "capabilities": {
+    "fs": "none",
+    "net": "none",
+    "proc": "spawn_argv"
+  },
+  "timeout_s": 10,
+  "output_limits": {
+    "max_stdout_bytes": 50000,
+    "max_stderr_bytes": 65536,
+    "max_result_chars": 50000
+  },
+  "concurrency": "shared_read",
+  "idempotent": true,
+  "dry_run": false,
+  "rollback": "none",
+  "redaction": ["secrets"],
+  "path_scope": "system_read",
+  "tests": [
+    "tests/unit/tools/test_readonly_tools.py",
+    "tests/integration/tools/test_readonly_sandbox.py"
+  ]
+}
