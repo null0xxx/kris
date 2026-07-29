@@ -391,8 +391,96 @@ bounded by `timeout-minutes` (a hang is now a proven failure mode in this code).
   tell a read path from a write path and refuses every out-of-workspace declared
   path.
 
+## HARDEN-05 — `18ecc0e` — the §8.1 system bind set is measured, not assumed
+
+Human-approved out-of-band, before T3.04, because it BLOCKED T3.04: every exec
+returned `sandbox_unavailable`, so no tool handler could have been verified.
+
+**Trigger.** The host migrated Zorin OS 18.1 → Garuda Linux (Arch). Two
+independent breakages, both environment-revealed, neither a code regression:
+
+1. **The venv died.** `venv/bin/python3` is a SYMLINK to `/usr/bin/python3`,
+   which on Garuda resolves to 3.14.6; the venv's `site-packages` is
+   `lib/python3.12/`. No pytest, ruff, mypy or coverage — **no floor was
+   measurable**. Rebuilding on 3.14 is impossible: `requirements.lock` pins one
+   cp312 wheel hash per package and `--require-hashes` correctly refuses the
+   cp314 artifact (measured on `cffi`). Python 3.12 is absent from Arch repos and
+   chaotic-aur, so the venv is now built from **uv's standalone CPython 3.12.13**
+   — ADR-005 already names `uv` as a documented fast-path, so no contract moved.
+   The venv now points at uv's store, not `/usr/bin`, so a distro Python bump
+   cannot break it again.
+2. **The sandbox died.** `SPEC.md:581` lists `/etc/alternatives` among the §8.1
+   read-only binds. It is Debian's `update-alternatives` directory and does not
+   exist on Arch; `bwrap --ro-bind` on a missing source is a HARD error.
+
+**The probe was not wrong.** `functional_probe_argv` mirrored `SYSTEM_RO_BINDS`
+deliberately — "a distribution missing one of those binds fails here exactly as
+the real profile would — the intended, fail-closed coupling". The coupling was
+right, the conclusion was not: it reported an unbuildable profile instead of
+building the one this host supports. `profiles.py` had ALREADY named the class
+("`/lib64` is absent on some distributions") and delegated the degrade decision
+to `availability`, which never implemented it. HARDEN-05 implements it.
+
+**Shape.** `probe()` gains an injected `exists_fn` (default `os.path.exists`),
+resolves the template against the host ONCE, and carries `system_binds` +
+`omitted_binds` on the receipt. Both `functional_probe_argv` and
+`compose_exec_argv` render that one set, so probe and exec cannot drift.
+`build_argv` gains `system_binds`, validated as a non-empty SUBSET in BOTH
+`profiles` and `compose` — **omission shrinks the child's mount view and is
+safe; addition would widen it and is refused** — and rendered in TEMPLATE order,
+so ordering is structural rather than documented. Sufficiency is decided by
+RUNNING the surviving set; a hand-maintained "required binds" list would just
+restore the assumption. SPEC §8.1 carries a measured revision table
+(precedent: HARDEN-03).
+
+### 🧪 RED — and one shape of RED that is not red
+7 integration failures **plus 2 e2e tests that were silently SKIPPING** on
+`sandbox_unavailable`. A skipped security test proves nothing, and the skip
+looked like a clean suite. Then 76 failing unit tests at the contract level.
+
+**Gate state after HARDEN-05:** pytest **2664 passed / 0 failed / 0 skipped** ·
+ruff clean · `mypy --strict` clean (12·7·8·5·8·4·1·1) · **TCB LOC 5434 / 6000** ·
+**100% branch, 0 partial, 0 pragmas** on both floors (`availability` 147/38,
+`profiles` 95/58) · CI 7 jobs unchanged.
+
+⚠️ **CI still pins `python-version: "3.12"` in all six jobs, so local floors
+match CI again.** Do not "upgrade" the local venv to 3.14 — it silently breaks
+the lock and desynchronises local measurement from CI.
+
+### 🔍 Critics — isolated 4R via the native facade
+Receipt `review-90c4425d8a49db13`, HIGH risk, canonical 4R, budget 200 lines,
+`finalize` → **approved**, `validate --gate pre-commit` → **allow**.
+**R1 (risk): 0 findings** — confirmed no widening path, no probe/exec drift, and
+that a lying or racing `exists_fn` can only SHRINK the mount view. R4: 3, R3: 1,
+R2: 4 — all WARNING/SUGGESTION, no blocker. Two lenses INDEPENDENTLY caught the
+same false docstring claim, which is why they run blind.
+
+### 🔖 Named residuals from HARDEN-05
+- **`omitted_binds` reaches neither the §6.5 `ToolResult` nor the audit record.**
+  The first host-variable mount view in this system is therefore unobservable in
+  production. Closing it is a §6.5 schema change — a `tools/` contract, not a
+  `sandbox/` one.
+- The new `exists_all` docstring claims a file-wide hermeticity invariant that
+  **~19 pre-existing `probe()` call sites do not satisfy** (they still reach the
+  real `os.path.exists`); `compose_exec_argv`'s docstring does not list its new
+  check; the module docstring has no HARDEN-05 section, unlike HARDEN-03.
+  **Follow-up, separately reviewable** — the receipt froze this candidate, and
+  editing after START invalidates it.
+- With the production `os.path.exists`, an existing-but-**inaccessible** bind
+  (EACCES/ELOOP) is silently recorded as absent rather than raising.
+- The functional probe proves `/bin/true`'s **ELF-loader** reachability, not
+  general `/usr` content reachability: a surviving set omitting `/usr` but
+  keeping `/bin`/`/lib`/`/lib64` could still issue an "available" receipt.
+- **Bundled and named, not hidden:** `test_the_child_environment_carries_no_host_variables`
+  moved from `/bin/sh -c env` to `/bin/cat /proc/self/environ`. Arch symlinks
+  `/bin/sh` to bash, which injects `PWD`, `SHLVL` and `_` of its own even from an
+  empty environment, so the old spelling measured the SHELL, not the child
+  (`--clearenv` was correct on both distros). This is the trap
+  `PROMPT_NEXT_SESSION.md` §5 already documented.
+
 ### ⏭️ NEXT frontier
-Recompute the closure yourself. At `d4f12c7` the ready set is **T3.04** (read-only
+Recompute the closure yourself. At `18ecc0e` the ready set is **T3.04** (read-only
 tool batch — the first task with real handlers, and the owner of the fstat-pinning
 obligation above), **T3.09**/**T3.11** (provider adapters), **T4.03** (audit
-reader), **T4.04**, **T4.07**, **T4.10**.
+reader), **T4.04**, **T4.07**, **T4.10**. T3.04 is now actually verifiable: before
+HARDEN-05 every exec was BLOCKED.
