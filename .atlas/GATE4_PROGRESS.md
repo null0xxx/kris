@@ -588,9 +588,26 @@ first, handlers second) so each candidate keeps its own budget.
   exercised but not proven proportional.
 
 ### ⏭️ NEXT frontier
-Recompute the closure yourself. At `18d15d6` the ready set is **T3.05** (`fs.write`
-— and note it is `proc: none` too, so it is the first WRITE tool to face the
-in-process routing question), **T3.06**, **T3.09**/**T3.11** (provider adapters),
-**T4.03** (audit reader), **T4.04**, **T4.07**, **T4.10**. T3.04's handlers are
-built but **nothing in production wires them yet** — `dispatcher.run(handler=…)`
-has no caller outside the tests. The assembly point is **T5.12** (session engine).
+
+⚠️ **CORRECTED.** An earlier version of this line named **T3.05** as ready. It is
+NOT: `IMPLEMENTATION_PLAN.md:561` gives T3.05 **`Depends on: T3.04, T4.04`**, and
+T4.04 (`recovery/`, the shadow-git checkpoint store) is an EMPTY scaffold —
+`recovery/__init__.py` is 0 lines and no recovery test exists. The mistake was
+reading only the first dependency. This is exactly what
+`PROMPT_NEXT_SESSION.md` §3 means by "compute the transitive closure YOURSELF":
+a documented frontier is a hypothesis, including one this ledger wrote.
+
+Recomputed at `18d15d6` by parsing every `### Tx.yy` header and its `Depends on`
+line out of the plan — 70 tasks, 31 done, 39 remaining:
+
+- **T3.05 is blocked by T4.04.** T3.06 is blocked by T3.05 and T4.07.
+- Ready and highest-leverage: **T4.04** (unblocks T3.05, which unblocks T3.06),
+  then **T3.09**/**T3.11** (provider adapters), **T4.03** (audit reader),
+  **T4.05**–**T4.12**.
+- Do NOT build `fs.write` without its checkpoint: §6.4 says "checkpoint
+  pre-write" and the plan's GREEN says "checkpoint pre-write call". A write tool
+  without its rollback is the dangerous half on its own.
+
+T3.04's handlers are built but **nothing in production wires them yet** —
+`dispatcher.run(handler=…)` has no caller outside the tests. The assembly point
+is **T5.12** (session engine).
