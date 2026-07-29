@@ -133,9 +133,29 @@ def runner(
     return _run
 
 
-def token(**kwargs: Any) -> SandboxAvailable:
+def exists_all(path: str) -> bool:
+    """A host where every §8.1 system bind is present (the pre-HARDEN-05 world).
+
+    Unit tests must not depend on the filesystem of whoever runs them: the real
+    default is `os.path.exists`, and on Arch `/etc/alternatives` is absent, which
+    would silently change the argv these tests pin. Every probe below therefore
+    states the host it assumes.
+    """
+    return True
+
+
+def exists_without(*missing: str) -> Callable[[str], bool]:
+    """A host missing exactly ``missing`` (e.g. Arch, which has no alternatives)."""
+
+    def _exists(path: str) -> bool:
+        return path not in missing
+
+    return _exists
+
+
+def token(*, exists_fn: Callable[[str], bool] = exists_all, **kwargs: Any) -> SandboxAvailable:
     """The ONLY supported way to obtain a receipt: a successful probe."""
-    return probe(which_fn=which_found, run_fn=runner(**kwargs))
+    return probe(which_fn=which_found, run_fn=runner(**kwargs), exists_fn=exists_fn)
 
 
 def compose(**overrides: Any) -> list[str]:
@@ -366,7 +386,7 @@ def test_a_failing_version_check_never_reaches_the_functional_step() -> None:
 
 def test_probe_runs_exactly_two_commands_version_then_functional() -> None:
     seen: list[list[str]] = []
-    probe(which_fn=which_found, run_fn=runner(seen=seen))
+    probe(which_fn=which_found, run_fn=runner(seen=seen), exists_fn=exists_all)
     assert len(seen) == 2
     assert seen[0] == [BWRAP_PATH, "--version"]
     assert seen[1] == functional_probe_argv(BWRAP_PATH)
@@ -680,7 +700,8 @@ def test_receipt_is_frozen() -> None:
 def test_receipt_repr_shows_the_pinned_paths_and_no_sentinel() -> None:
     assert repr(token()) == (
         "SandboxAvailable(version=(0, 9, 0), "
-        f"bwrap_path='{BWRAP_PATH}', prlimit_path='{PRLIMIT_PATH}')"
+        f"bwrap_path='{BWRAP_PATH}', prlimit_path='{PRLIMIT_PATH}', "
+        f"system_binds={SYSTEM_RO_BINDS!r}, omitted_binds=())"
     )
 
 
@@ -775,16 +796,29 @@ def test_ro_profile_composes_too() -> None:
 # ---------------------------------------------------------------------------
 
 
-def forged(*, bwrap_path: str = BWRAP_PATH, prlimit_path: str = PRLIMIT_PATH) -> SandboxAvailable:
+def forged(
+    *,
+    bwrap_path: str = BWRAP_PATH,
+    prlimit_path: str = PRLIMIT_PATH,
+    system_binds: object = SYSTEM_RO_BINDS,
+    omit_binds_attr: bool = False,
+) -> SandboxAvailable:
     """A receipt carrying the issuance sentinel but arbitrary pinned paths.
 
     Not reachable through `probe` — the point is to exercise the compose-time
     re-validation, which is the check that still holds if a receipt is forged.
+
+    `omit_binds_attr` leaves `system_binds` UNSET, which is what `object.__new__`
+    and `pickle` actually produce under `slots=True`: the attribute does not
+    exist at all, rather than holding a wrong value.
     """
     receipt = object.__new__(SandboxAvailable)
     object.__setattr__(receipt, "version", (0, 9, 0))
     object.__setattr__(receipt, "bwrap_path", bwrap_path)
     object.__setattr__(receipt, "prlimit_path", prlimit_path)
+    if not omit_binds_attr:
+        object.__setattr__(receipt, "system_binds", system_binds)
+    object.__setattr__(receipt, "omitted_binds", ())
     object.__setattr__(receipt, "_issuance", availability_mod._ISSUED_BY_PROBE)
     return receipt
 
@@ -1021,3 +1055,201 @@ def test_package_exports_compose_but_not_the_bare_prefix_builder() -> None:
         assert hasattr(pkg, name)
     assert "prlimit_prefix" not in pkg.__all__
     assert not hasattr(pkg, "prlimit_prefix")
+
+
+# ---------------------------------------------------------------------------
+# HARDEN-05 — the §8.1 bind set is MEASURED on this host, once, at probe time
+#
+# The template names `/etc/alternatives`, a Debian `update-alternatives`
+# directory that does not exist on Arch. `bwrap --ro-bind` on a missing source is
+# a HARD error, so the functional probe exited 1 and EVERY exec was BLOCKED with
+# `sandbox_unavailable` — measured on Garuda Linux, bwrap 0.11.2, userns enabled.
+#
+# The fix must not break the property the old code bought with that failure: the
+# probe and the real exec must run over the SAME bind set, or a passing probe
+# stops attesting a working exec (the HARDEN-03 lesson, one layer down).
+# ---------------------------------------------------------------------------
+
+ARCH = exists_without("/etc/alternatives")
+
+
+def probe_binds(argv: list[str]) -> list[str]:
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "--ro-bind"]
+
+
+def test_a_bind_absent_from_the_host_is_omitted_from_the_probe_argv() -> None:
+    seen: list[list[str]] = []
+    probe(which_fn=which_found, run_fn=runner(seen=seen), exists_fn=ARCH)
+    assert "/etc/alternatives" not in probe_binds(seen[1])
+
+
+def test_the_receipt_carries_the_resolved_and_the_omitted_binds() -> None:
+    """Omission must be ATTESTED, not silent — the receipt is the record."""
+    receipt = token(exists_fn=ARCH)
+    assert receipt.system_binds == tuple(p for p in SYSTEM_RO_BINDS if p != "/etc/alternatives")
+    assert receipt.omitted_binds == ("/etc/alternatives",)
+
+
+def test_a_host_with_every_bind_omits_nothing() -> None:
+    receipt = token()
+    assert receipt.system_binds == SYSTEM_RO_BINDS
+    assert receipt.omitted_binds == ()
+
+
+def test_the_probe_and_the_composed_exec_share_one_bind_set() -> None:
+    """THE invariant. A probe over a different mount set attests nothing.
+
+    Set EQUALITY, not containment: if the composed argv ever gained a bind the
+    probe never exercised, this must fail rather than pass by subset.
+    """
+    seen: list[list[str]] = []
+    receipt = probe(which_fn=which_found, run_fn=runner(seen=seen), exists_fn=ARCH)
+    composed = compose_exec_argv(
+        available=receipt,
+        profile=Profile.RO,
+        workspace=WS,
+        cwd=CWD,
+        cache_dir=CACHE,
+        argv=TOOL,
+        timeout_s=TIMEOUT,
+    )
+    system_in_composed = [b for b in probe_binds(composed) if b != WS]
+    assert system_in_composed == probe_binds(seen[1])
+    assert tuple(system_in_composed) == receipt.system_binds
+
+
+def test_a_bind_absent_at_probe_time_is_absent_from_the_composed_argv() -> None:
+    composed = compose_exec_argv(
+        available=token(exists_fn=ARCH),
+        profile=Profile.RO,
+        workspace=WS,
+        cwd=CWD,
+        cache_dir=CACHE,
+        argv=TOOL,
+        timeout_s=TIMEOUT,
+    )
+    assert "/etc/alternatives" not in composed
+
+
+def test_a_host_with_no_system_binds_at_all_is_sandbox_unavailable() -> None:
+    with pytest.raises(SandboxUnavailable):
+        probe(which_fn=which_found, run_fn=runner(), exists_fn=lambda _p: False)
+
+
+def test_the_functional_probe_still_decides_sufficiency() -> None:
+    """Omission is bounded by MEASUREMENT, not by a hand-maintained required list.
+
+    A hand-written "these binds are mandatory" set would re-introduce exactly the
+    distro assumption this change removes. Instead the resolved set is RUN: if
+    what survived cannot execute /bin/true, the probe fails and exec is BLOCKED.
+    """
+    with pytest.raises(SandboxUnavailable):
+        probe(which_fn=which_found, run_fn=runner(functional_rc=1), exists_fn=ARCH)
+
+
+def test_prlimit_under_an_OMITTED_bind_is_refused() -> None:
+    """The mount-view check must read the RESOLVED set, not the template.
+
+    `prlimit` is the head of the INNER command. If it lives under a bind the host
+    lacks, the sandbox cannot see it and every exec is an ENOENT — checking it
+    against the template would wave that through.
+    """
+    # `/usr/bin/prlimit` with `/usr` omitted: reachable via no surviving bind
+    # ("/usr/bin/prlimit" does not start with "/bin/"). Deliberately NOT
+    # "/bin/prlimit" with "/bin" omitted — `_locate` realpaths first, and on a
+    # merged-usr host /bin is a symlink to /usr/bin, which would quietly put the
+    # path back inside the surviving /usr bind and make this test pass for the
+    # wrong reason on some hosts and fail on others.
+    receipt = probe(which_fn=which_found, run_fn=runner(), exists_fn=exists_without("/usr"))
+    with pytest.raises(SandboxUnavailable, match="mount view"):
+        compose_exec_argv(
+            available=receipt,
+            profile=Profile.RO,
+            workspace=WS,
+            cwd=CWD,
+            cache_dir=CACHE,
+            argv=TOOL,
+            timeout_s=TIMEOUT,
+        )
+
+
+def test_the_resolved_set_can_never_exceed_the_template() -> None:
+    """An `exists_fn` that says yes to everything cannot ADD a bind."""
+    receipt = probe(which_fn=which_found, run_fn=runner(), exists_fn=lambda _p: True)
+    assert set(receipt.system_binds) <= set(SYSTEM_RO_BINDS)
+
+
+def test_the_host_is_only_asked_about_template_binds() -> None:
+    """The probe measures the §8.1 list and nothing else — no arbitrary stat()."""
+    asked: list[str] = []
+
+    def _exists(path: str) -> bool:
+        asked.append(path)
+        return True
+
+    probe(which_fn=which_found, run_fn=runner(), exists_fn=_exists)
+    assert set(asked) == set(SYSTEM_RO_BINDS)
+
+
+def test_the_host_is_measured_once_per_probe_not_once_per_bind_use() -> None:
+    """A TOCTOU between the probe argv and the composed argv would reopen the bug."""
+    calls: list[str] = []
+
+    def _exists(path: str) -> bool:
+        calls.append(path)
+        return path != "/etc/alternatives"
+
+    receipt = probe(which_fn=which_found, run_fn=runner(), exists_fn=_exists)
+    before = len(calls)
+    compose_exec_argv(
+        available=receipt,
+        profile=Profile.RO,
+        workspace=WS,
+        cwd=CWD,
+        cache_dir=CACHE,
+        argv=TOOL,
+        timeout_s=TIMEOUT,
+    )
+    assert len(calls) == before == len(SYSTEM_RO_BINDS)
+
+
+def test_an_exists_fn_that_raises_is_sandbox_unavailable() -> None:
+    def _boom(path: str) -> bool:
+        raise OSError(13, "Permission denied")
+
+    with pytest.raises(SandboxUnavailable):
+        probe(which_fn=which_found, run_fn=runner(), exists_fn=_boom)
+
+
+def test_a_forged_receipt_cannot_widen_the_bind_set() -> None:
+    """The receipt is re-validated at compose time, like the pinned paths are."""
+    receipt = token()
+    object.__setattr__(receipt, "system_binds", ("/usr", "/etc/shadow"))
+    with pytest.raises(SandboxUnavailable):
+        compose_exec_argv(
+            available=receipt,
+            profile=Profile.RO,
+            workspace=WS,
+            cwd=CWD,
+            cache_dir=CACHE,
+            argv=TOOL,
+            timeout_s=TIMEOUT,
+        )
+
+
+@pytest.mark.parametrize("bad", [(), None, "/usr", ["/usr"], ("/usr", "/etc/shadow")])
+def test_a_receipt_with_a_bad_bind_set_is_sandbox_unavailable(bad: object) -> None:
+    """Every malformed shape lands on the ONE §8.3 reason code, not a TypeError."""
+    with pytest.raises(SandboxUnavailable):
+        compose(available=forged(system_binds=bad))
+
+
+def test_a_receipt_missing_the_bind_attribute_entirely_is_sandbox_unavailable() -> None:
+    """`slots=True` + `object.__new__` leaves the attribute UNSET, not wrong.
+
+    Reading it with plain attribute access would raise AttributeError straight
+    past §8.3's single-reason-code contract — the same reason `_issuance` is read
+    with a defaulted `getattr`.
+    """
+    with pytest.raises(SandboxUnavailable):
+        compose(available=forged(omit_binds_attr=True))

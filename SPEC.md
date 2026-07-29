@@ -598,6 +598,18 @@ Recorded-stream golden tests: captured SSE sequences (sanitized) replayed throug
 
 **პროგრამების გზები:** `<abs bwrap>`/`<abs prlimit>` = `probe()`-ით ვალიდირებული აბსოლუტური გზები (`{/usr/bin, /bin, /usr/local/bin}`-ის შიგნით). შიშველი სახელები **არ** გამოიყენება: PATH-ის shim (`~/.local/bin/bwrap`, writable, PATH #1) გაზომვით **სრულიად უსანდბოქსოდ** უშვებდა ინსტრუმენტს, სანამ probe "available"-ს აფიქსირებდა (I11). `<abs prlimit>` დამატებით უნდა იყოს mount view-ს შიგნით — თორემ ყოველი exec ჩავარდება.
 
+**რევიზია 2026-07-29 (Gate 4 / HARDEN-05) — system bind-ების სია ჰოსტზე იზომება, აღარ იგულისხმება.** ზემოთა template-ის `--ro-bind` სია დაიწერა Zorin OS 18.1-ზე (Debian-ის ოჯახი, Appendix A) და **დისტრიბუტივის ვარაუდს ატარებდა**. გაზომილია Garuda Linux-ზე (Arch, `bubblewrap 0.11.2`, `kernel.unprivileged_userns_clone=1`, AppArmor userns შეზღუდვის გარეშე):
+
+| # | იყო | არის | მიზეზი (გაზომილი) |
+|---|---|---|---|
+| 1 | `--ro-bind` სია **უპირობოდ** ირენდერებოდა | სია = template **∩** ჰოსტზე არსებული გზები, გაზომილი `probe()`-ზე **ერთხელ** | `/etc/alternatives` არის **Debian-ის `update-alternatives`** დირექტორია და Arch-ზე **არ არსებობს**. `bwrap --ro-bind` არარსებულ წყაროზე **მკაცრად ვარდება** (`bwrap: Can't find source path /etc/alternatives: No such file or directory`), ამიტომ functional probe `rc=1`-ს აბრუნებდა და **ყოველი exec BLOCKED იყო** `sandbox_unavailable`-ით — sandbox-ი თავისთავად სრულყოფილად მუშაობდა. გაზომილი: ექვსი bind-იდან ხუთი არსებობს, მხოლოდ `/etc/alternatives` აკლია; იმავე argv-ს მის გარეშე `rc=0`, მასთან `rc=1`. იგივე კლასს ეკუთვნის `/lib64` (`profiles.py`-ს დოკსტრინგში უკვე დასახელებული როგორც "absent on some distributions"). |
+
+**რატომ არ არის ეს sandbox-ის დასუსტება.** არარენდერებული `--ro-bind` ბავშვის mount view-ს **მკაცრად ავიწროებს**, არასოდეს აფართოებს — ამიტომ გამოტოვება უსაფრთხოა, **დამატება არა**: resolved სია ვალიდირდება როგორც template-ის არაცარიელი **ქვესიმრავლე** როგორც `profiles.build_argv`-ში, ისე `compose_exec_argv`-ში (ნაყალბევი receipt-ის წინააღმდეგ), და ირენდერება **template-ის რიგით** (bwrap mount-ებს თანმიმდევრობით ასრულებს, ე.ი. რიგი სემანტიკურია).
+
+**რა ინარჩუნებს fail-closed-ს.** (ა) გადარჩენილი სიმრავლის საკმარისობა **იზომება, არ იგულისხმება** — ხელით შენახული "სავალდებულო bind-ების" სია იმავე დისტრიბუტივის ვარაუდს დააბრუნებდა; ამის ნაცვლად functional probe **სწორედ გადარჩენილ სიმრავლეზე** ეშვება, და თუ ის `/bin/true`-ს ვერ უშვებს, probe ვარდება და exec BLOCKED რჩება. (ბ) თუ **არცერთი** bind არ არსებობს → `sandbox_unavailable`. (გ) probe-ის argv და შესრულების argv **ერთი და იმავე** სიმრავლიდან ირენდერება (HARDEN-03-ის coupling ერთი ფენით ქვემოთ), ე.ი. გამავალი probe კვლავ ატესტებს მუშა exec-ს.
+
+**ატესტაცია.** receipt (`SandboxAvailable`) ატარებს `system_binds`-საც და `omitted_binds`-საც, ე.ი. §8.1-ის mount view-ის რომელი ნაწილი **არ** დაედო — დასახელებულია, არა ჩუმი. ⚠️ **დასახელებული residual:** `omitted_binds` ჯერ **არ** გამოდის §6.5-ის `ToolResult`-ში და audit record-ში — ეს `tools/` ფენის კონტრაქტია და §6.5-ის schema-ს ცვლილებას მოითხოვს.
+
 ### 8.2 Profile `ws` (scoped write, no network by default)
 
 იგივე, გარდა: `--bind <workspace> <workspace>` (rw), plus `--tmpfs /tmp`; cache tmpfs rw; build/test tools-ისთვის `PATH` შეიძლება შეიცავდეს `<workspace>/.venv/bin` (exists-check). Network-enabled variant (`ws-net`) V1-ში არ არსებობს — test runners offline უნდა მუშაობდეს; დოკუმენტირებული V2 candidate.

@@ -82,6 +82,16 @@ module allowed to touch the filesystem — including whether the §8.1 system bi
 exist (``/lib64`` is absent on some distributions); whether to degrade a missing
 bind is a decision made against a real filesystem, which this builder never
 consults.
+
+**HARDEN-05 closed that gap.** The paragraph above described an intent that was
+not implemented: ``build_argv`` rendered the §8.1 template UNCONDITIONALLY, and
+``bwrap --ro-bind`` on a missing source is a hard error, so on a host without
+``/etc/alternatives`` (Debian's ``update-alternatives`` directory — absent on
+Arch) the functional probe exited 1 and EVERY exec was BLOCKED with
+``sandbox_unavailable``. The set is now MEASURED once by
+:func:`~lsassist.sandbox.availability.probe`, carried in the receipt, and handed
+here as ``system_binds`` — see :func:`_checked_system_binds` for why omission is
+safe and addition is not.
 """
 
 from __future__ import annotations
@@ -219,12 +229,63 @@ def checked_argv(argv: object) -> list[str]:
     return items
 
 
-def _check_mount_shape(workspace: str, cache_dir: str) -> None:
+def _checked_system_binds(system_binds: object) -> tuple[str, ...]:
+    """Validate a RESOLVED §8.1 bind set and return it in TEMPLATE order (HARDEN-05).
+
+    The §8.1 template is not universal — ``/etc/alternatives`` is Debian's
+    ``update-alternatives`` directory and is absent on Arch, ``/lib64`` is absent
+    elsewhere — and ``bwrap --ro-bind`` on a missing source is a HARD error, so a
+    host that lacks one bind could execute nothing at all. Which binds actually
+    exist is a MEASUREMENT, taken once by
+    :func:`~lsassist.sandbox.availability.probe`; this builder stays pure and
+    renders exactly the set it is handed.
+
+    **Omission is safe; addition is not.** A ``--ro-bind`` that is not emitted
+    strictly SHRINKS the child's mount view, so dropping an absent path can never
+    widen what the sandbox exposes. Accepting a path OUTSIDE the template could:
+    a caller passing ``/etc/shadow`` or the host's ``$HOME`` would get an argv
+    that still calls itself the §8.1 ``ro`` profile — an I11 lie. The set is
+    therefore required to be a non-empty SUBSET, never an arbitrary list.
+
+    Returned in template order because bwrap applies mount operations
+    SEQUENTIALLY: filtering the template by membership (rather than trusting the
+    caller's order) makes that ordering STRUCTURAL, so no caller can get it
+    wrong, and de-duplicates as a side effect.
+    """
+    # A bare `str` is a Sequence and would render one bind PER CHARACTER.
+    if isinstance(system_binds, str) or not isinstance(system_binds, Sequence):
+        raise SandboxProfileError(
+            f"system_binds must be a sequence of §8.1 paths, got {system_binds!r}"
+        )
+    requested: set[str] = set()
+    for item in system_binds:
+        if not isinstance(item, str):
+            raise SandboxProfileError(f"system_binds entries must be str, got {item!r}")
+        if item not in SYSTEM_RO_BINDS:
+            raise SandboxProfileError(
+                f"system_binds entry {item!r} is not in the §8.1 template "
+                f"{list(SYSTEM_RO_BINDS)}; a resolved set may OMIT a bind the host "
+                "lacks, never ADD one the profile never promised"
+            )
+        requested.add(item)
+    resolved = tuple(path for path in SYSTEM_RO_BINDS if path in requested)
+    if not resolved:
+        raise SandboxProfileError(
+            "system_binds is empty; a sandbox with no system mounts cannot execute anything"
+        )
+    return resolved
+
+
+def _check_mount_shape(workspace: str, cache_dir: str, system_binds: tuple[str, ...]) -> None:
     """Reject mount layouts that cannot mean what the profile claims (§8.1/§8.2).
 
     STRUCTURAL, not authorization: each case makes the resulting argv a
     misdescription of itself — a host-wide bind that is no longer isolation, or
     a tmpfs that silently swallows the very tree the profile promised to expose.
+
+    ``system_binds`` is the RESOLVED set, not the template: a bind this host does
+    not have is never mounted, so the cache tmpfs cannot mask it and refusing on
+    its account would reject a layout that is in fact fine.
     """
     if workspace in _FORBIDDEN_WORKSPACE_ROOTS:
         raise SandboxProfileError(
@@ -239,7 +300,7 @@ def _check_mount_shape(workspace: str, cache_dir: str) -> None:
         )
     if cache_dir == "/":
         raise SandboxProfileError("cache_dir must not be '/' (a tmpfs over the whole tree)")
-    for system_path in SYSTEM_RO_BINDS:
+    for system_path in system_binds:
         if _is_within(system_path, cache_dir):
             raise SandboxProfileError(
                 f"cache_dir {cache_dir!r} would mask the system bind {system_path!r}"
@@ -263,6 +324,7 @@ def build_argv(
     term: str | None = None,
     env_extra: Mapping[str, str] | None = None,
     bwrap_path: str = "bwrap",
+    system_binds: Sequence[str] = SYSTEM_RO_BINDS,
 ) -> list[str]:
     """Build the §8.1/§8.2 ``bwrap`` argv for ``profile``.
 
@@ -289,6 +351,13 @@ def build_argv(
         :func:`~lsassist.sandbox.availability.probe` located and validated, so
         the binary that was attested is the binary that runs. Rendered verbatim
         — no lookup, no filesystem check (§2.2 purity).
+    :param system_binds: the RESOLVED §8.1 read-only binds to emit (HARDEN-05).
+        Defaults to the full template, so omission is always an explicit,
+        measured decision and never something a forgotten argument causes. Must
+        be a non-empty SUBSET of :data:`SYSTEM_RO_BINDS`; rendered in template
+        order whatever order it arrives in. The exec path passes the set
+        :func:`~lsassist.sandbox.availability.probe` measured on this host, which
+        is also the set the functional probe exercised.
     :returns: a fresh ``list[str]`` starting with ``bwrap_path``. Deterministic:
         identical inputs always yield an identical argv (env keys are sorted).
     :raises SandboxProfileError: unknown/absent profile, a structurally invalid
@@ -299,7 +368,8 @@ def build_argv(
     cwd = _checked_path("cwd", cwd)
     cache_dir = _checked_path("cache_dir", cache_dir)
     tool_argv = checked_argv(argv)
-    _check_mount_shape(workspace, cache_dir)
+    binds = _checked_system_binds(system_binds)
+    _check_mount_shape(workspace, cache_dir, binds)
     if not isinstance(bwrap_path, str) or not bwrap_path or "\x00" in bwrap_path:
         raise SandboxProfileError(
             f"bwrap_path must be a non-empty NUL-free str, got {bwrap_path!r}"
@@ -341,7 +411,7 @@ def build_argv(
         # §8.3's "constructed from scratch, not inherited" true of the CHILD.
         "--clearenv",
     ]
-    for system_path in SYSTEM_RO_BINDS:
+    for system_path in binds:
         out += ["--ro-bind", system_path, system_path]
     out += ["--proc", "/proc", "--dev", "/dev"]
     out += [workspace_bind, workspace, workspace]

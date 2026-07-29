@@ -24,7 +24,7 @@ import pytest
 from lsassist.contracts.sandbox_profile import Profile
 from lsassist.sandbox import profiles as profiles_mod
 from lsassist.sandbox.env import EnvProjectionError
-from lsassist.sandbox.profiles import SandboxProfileError, build_argv
+from lsassist.sandbox.profiles import SYSTEM_RO_BINDS, SandboxProfileError, build_argv
 
 WS = "/home/u/proj"
 CWD = "/home/u/proj/src"
@@ -539,4 +539,100 @@ def test_program_path_is_keyword_only() -> None:
     with pytest.raises(TypeError):
         build_argv(  # type: ignore[misc]
             Profile.RO, workspace=WS, cwd=CWD, cache_dir=CACHE, argv=TOOL
+        )
+
+
+# ---------------------------------------------------------------------------
+# HARDEN-05 — the §8.1 bind set is RESOLVED against a host, then rendered here
+#
+# `bwrap --ro-bind` on a source that does not exist is a HARD error, and the
+# §8.1 template names paths that are not universal: `/etc/alternatives` is
+# Debian's `update-alternatives` directory and does not exist on Arch, so every
+# exec on such a host was BLOCKED with `sandbox_unavailable`. The measurement
+# belongs to `availability` (the only module allowed to touch the filesystem);
+# this builder stays pure and renders exactly the set it is handed.
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_resolved_binds_are_rendered() -> None:
+    """The whole point: a bind the host does not have is never emitted."""
+    resolved = tuple(p for p in SYSTEM_RO_BINDS if p != "/etc/alternatives")
+    bound = [src for src, _ in pairs(ro(system_binds=resolved), "--ro-bind")]
+    assert "/etc/alternatives" not in bound
+    assert bound == [*resolved, WS]
+
+
+def test_the_default_bind_set_is_still_the_full_8_1_template() -> None:
+    """Omission must be an explicit, measured decision — never the default."""
+    bound = [src for src, _ in pairs(ro(), "--ro-bind")]
+    assert bound == [*SYSTEM_RO_BINDS, WS]
+
+
+def test_a_bind_outside_the_8_1_template_is_refused() -> None:
+    """Omission SHRINKS the child's view and is safe; ADDITION widens it.
+
+    A caller that could inject an arbitrary `--ro-bind` through this parameter
+    could hand the child `/etc/shadow` or the host's `$HOME` while the argv still
+    calls itself the §8.1 `ro` profile — an I11 lie. Subset, or nothing.
+    """
+    with pytest.raises(SandboxProfileError):
+        ro(system_binds=("/usr", "/etc/shadow"))
+
+
+def test_an_empty_bind_set_is_refused() -> None:
+    """A sandbox with no system binds cannot execute anything; fail closed."""
+    with pytest.raises(SandboxProfileError):
+        ro(system_binds=())
+
+
+@pytest.mark.parametrize("bad", [None, "/usr", 0, ["/usr", 0], ("/usr", None)])
+def test_a_malformed_bind_set_is_refused(bad: object) -> None:
+    # A bare str is iterable and would silently render one bind PER CHARACTER.
+    with pytest.raises(SandboxProfileError):
+        ro(system_binds=bad)
+
+
+def test_bind_order_is_the_template_order_whatever_the_caller_passes() -> None:
+    """bwrap applies mounts SEQUENTIALLY, so order is semantic, not cosmetic.
+
+    Making the order a property of the TEMPLATE rather than of the caller's
+    argument means a caller cannot get it wrong — the guarantee is structural,
+    not documented.
+    """
+    scrambled = tuple(reversed(SYSTEM_RO_BINDS))
+    bound = [src for src, _ in pairs(ro(system_binds=scrambled), "--ro-bind")]
+    assert bound == [*SYSTEM_RO_BINDS, WS]
+
+
+def test_a_duplicate_in_the_bind_set_is_rendered_once() -> None:
+    resolved = ("/usr", "/usr", "/bin")
+    bound = [src for src, _ in pairs(ro(system_binds=resolved), "--ro-bind")]
+    assert bound == ["/usr", "/bin", WS]
+
+
+def test_the_cache_tmpfs_masking_check_uses_the_resolved_set() -> None:
+    """A bind that is not mounted cannot be masked by the cache tmpfs.
+
+    With `/etc/alternatives` omitted, `cache_dir=/etc` no longer masks it — but
+    it still masks `/etc/ld.so.cache`, so the refusal must survive for the binds
+    that ARE mounted.
+    """
+    def build(cache_dir: str, **kw: Any) -> list[str]:
+        return build_argv(
+            profile=Profile.RO, workspace=WS, cwd=CWD, cache_dir=cache_dir, argv=TOOL, **kw
+        )
+
+    # Still mounted -> the cache tmpfs would mask it -> refuse.
+    with pytest.raises(SandboxProfileError):
+        build("/etc", system_binds=("/usr", "/etc/ld.so.cache"))
+    with pytest.raises(SandboxProfileError):
+        build("/etc/alternatives")
+    # Omitted -> never mounted -> nothing to mask -> the layout is fine.
+    assert build("/etc/alternatives", system_binds=("/usr", "/bin", "/lib"))
+
+
+def test_system_binds_is_keyword_only() -> None:
+    with pytest.raises(TypeError):
+        build_argv(  # type: ignore[misc]
+            Profile.RO, WS, CWD, CACHE, TOOL, SYSTEM_RO_BINDS
         )

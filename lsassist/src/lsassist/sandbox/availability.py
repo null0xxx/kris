@@ -204,6 +204,15 @@ class SandboxAvailable:
     bwrap_path: str
     #: Absolute, realpath-resolved, trusted-directory path to ``prlimit``.
     prlimit_path: str
+    #: The §8.1 binds that EXIST on this host, in template order (HARDEN-05).
+    #: This is the set the functional probe exercised and the set
+    #: :func:`compose_exec_argv` renders — the two cannot drift apart, because
+    #: there is only one of them.
+    system_binds: tuple[str, ...] = SYSTEM_RO_BINDS
+    #: The §8.1 binds this host does NOT have. Empty on a Debian-family host.
+    #: Carried so the omission is ATTESTED rather than silent: a reader of the
+    #: receipt can see exactly which part of the §8.1 mount view was not applied.
+    omitted_binds: tuple[str, ...] = ()
 
     # Never passed to __init__ (so `replace` cannot carry it over) and excluded
     # from repr and equality.
@@ -216,15 +225,65 @@ class SandboxAvailable:
 
 
 def _issue(
-    *, version: tuple[int, int, int], bwrap_path: str, prlimit_path: str
+    *,
+    version: tuple[int, int, int],
+    bwrap_path: str,
+    prlimit_path: str,
+    system_binds: tuple[str, ...],
+    omitted_binds: tuple[str, ...],
 ) -> SandboxAvailable:
     """Mint a receipt WITHOUT running ``__init__`` (the only issuance path)."""
     token = object.__new__(SandboxAvailable)
     object.__setattr__(token, "version", version)
     object.__setattr__(token, "bwrap_path", bwrap_path)
     object.__setattr__(token, "prlimit_path", prlimit_path)
+    object.__setattr__(token, "system_binds", system_binds)
+    object.__setattr__(token, "omitted_binds", omitted_binds)
     object.__setattr__(token, "_issuance", _ISSUED_BY_PROBE)
     return token
+
+
+def _resolve_system_binds(
+    exists_fn: Callable[[str], bool],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Measure which §8.1 binds this host actually has (HARDEN-05).
+
+    ``bwrap --ro-bind`` on a source that does not exist is a HARD error, and the
+    §8.1 template is not universal: ``/etc/alternatives`` belongs to Debian's
+    ``update-alternatives`` and does not exist on Arch, so on such a host the
+    functional probe exited 1 and every exec was BLOCKED — measured on Garuda
+    Linux with a fully working bwrap 0.11.2 and userns enabled.
+
+    Omitting an absent bind cannot weaken the sandbox: a ``--ro-bind`` that is
+    not emitted strictly SHRINKS the child's mount view. What it could do is
+    produce a mount view too thin to execute anything — and that is decided by
+    MEASUREMENT rather than by a hand-maintained "required" list, which would
+    just re-introduce the distro assumption this removes: the surviving set is
+    what :func:`_check_functional` then RUNS. If it cannot execute
+    :data:`_PROBE_TARGET`, the probe fails and exec stays BLOCKED.
+
+    :returns: ``(present, missing)``, both in template order.
+    :raises SandboxUnavailable: ``exists_fn`` raised, or NOTHING exists.
+    """
+    present: list[str] = []
+    missing: list[str] = []
+    for path in SYSTEM_RO_BINDS:
+        try:
+            found = exists_fn(path)
+        # Broad on purpose: a host we cannot interrogate is a host we cannot
+        # vouch for. `os.path.exists` swallows OSError, but an injected probe
+        # (or a future stat-based one) need not.
+        except Exception as exc:
+            raise SandboxUnavailable(
+                f"could not determine whether the §8.1 bind {path!r} exists: {exc!r}"
+            ) from exc
+        (present if found else missing).append(path)
+    if not present:
+        raise SandboxUnavailable(
+            f"none of the §8.1 system binds {list(SYSTEM_RO_BINDS)} exist on this host; "
+            "a sandbox with no system mounts cannot execute anything"
+        )
+    return tuple(present), tuple(missing)
 
 
 def _is_trusted_program(path: object) -> bool:
@@ -238,7 +297,7 @@ def _is_trusted_program(path: object) -> bool:
     )
 
 
-def _is_in_mount_view(path: str) -> bool:
+def _is_in_mount_view(path: str, system_binds: Sequence[str]) -> bool:
     """True when ``path`` is reachable inside the profile's own mount view (PURE).
 
     Segment-aware, so ``/binary/prlimit`` is not "inside" the ``/bin`` bind and
@@ -246,8 +305,13 @@ def _is_in_mount_view(path: str) -> bool:
     :func:`lsassist.sandbox.profiles._is_within` deliberately rather than
     importing it: this is availability's fail-closed decision, and profiles must
     stay free of any notion of which programs the exec path runs.
+
+    ``system_binds`` is the RESOLVED set from the receipt, never the template
+    (HARDEN-05): a ``prlimit`` sitting under a bind THIS host lacks is invisible
+    to the child, so checking it against the template would wave through an argv
+    whose every exec is an ENOENT.
     """
-    return any(path == bind or path.startswith(bind.rstrip("/") + "/") for bind in SYSTEM_RO_BINDS)
+    return any(path == bind or path.startswith(bind.rstrip("/") + "/") for bind in system_binds)
 
 
 def _excerpt(stderr: object) -> str:
@@ -352,30 +416,54 @@ def _check_version(
     return version
 
 
-def functional_probe_argv(bwrap_path: str) -> list[str]:
+def functional_probe_argv(
+    bwrap_path: str, system_binds: Sequence[str] = SYSTEM_RO_BINDS
+) -> list[str]:
     """The throwaway sandbox used to prove namespaces actually work here.
 
-    It mirrors the PROFILE's own system binds
-    (:data:`~lsassist.sandbox.profiles.SYSTEM_RO_BINDS`) rather than a minimal
-    ``/usr`` bind, because a probe that succeeds where the real profile fails
-    attests nothing. Measured on this host: ``--ro-bind /usr /usr -- /bin/true``
-    fails with ``bwrap: execvp /bin/true: No such file or directory`` — the ELF
+    It mirrors the PROFILE's own system binds rather than a minimal ``/usr``
+    bind, because a probe that succeeds where the real profile fails attests
+    nothing. Measured on this host: ``--ro-bind /usr /usr -- /bin/true`` fails
+    with ``bwrap: execvp /bin/true: No such file or directory`` — the ELF
     interpreter ``/lib64/ld-linux-x86-64.so.2`` is not in that mount view, and
     ``execvp`` reports the MISSING LOADER as a missing binary. Binding the
-    profile's set (``/usr``, ``/bin``, ``/lib``, ``/lib64``, …) exits 0. A
-    distribution missing one of those binds fails here exactly as the real
-    profile would — that is the intended, fail-closed coupling.
+    profile's set (``/usr``, ``/bin``, ``/lib``, ``/lib64``, …) exits 0.
+
+    **HARDEN-05: the set is the RESOLVED one, not the template.** It used to be
+    :data:`~lsassist.sandbox.profiles.SYSTEM_RO_BINDS` verbatim, on the reasoning
+    that "a distribution missing one of those binds fails here exactly as the
+    real profile would — the intended, fail-closed coupling". The coupling was
+    right; the conclusion was not. The probe was faithfully reporting an
+    unbuildable profile on every host without ``/etc/alternatives`` — i.e. all of
+    Arch — so the whole assistant was unusable there rather than protected. The
+    coupling is PRESERVED by construction: :func:`probe` measures once and both
+    this argv and :func:`compose_exec_argv` render that single set.
+
+    The default remains the full template so that a caller who omits the argument
+    gets the §8.1 literal, never a silently narrowed sandbox.
     """
     argv = [bwrap_path, "--unshare-user", "--unshare-pid"]
-    for path in SYSTEM_RO_BINDS:
+    for path in system_binds:
         argv += ["--ro-bind", path, path]
     argv += ["--", _PROBE_TARGET]
     return argv
 
 
-def _check_functional(bwrap_path: str, run_fn: Callable[[Sequence[str]], ProbeResult]) -> None:
-    """Step 2: a namespace can actually be created on THIS host, right now."""
-    result = _run(run_fn, functional_probe_argv(bwrap_path), "the bwrap functional probe")
+def _check_functional(
+    bwrap_path: str,
+    system_binds: Sequence[str],
+    run_fn: Callable[[Sequence[str]], ProbeResult],
+) -> None:
+    """Step 2: a namespace can actually be created on THIS host, right now.
+
+    This is also what bounds HARDEN-05's omission: the argv runs the set that
+    SURVIVED the existence measurement, so a host whose remaining binds cannot
+    execute :data:`_PROBE_TARGET` fails here instead of composing an exec that
+    would ENOENT.
+    """
+    result = _run(
+        run_fn, functional_probe_argv(bwrap_path, system_binds), "the bwrap functional probe"
+    )
     if result.returncode != 0:
         raise SandboxUnavailable(
             f"{bwrap_path} exists and is new enough, but cannot create a namespace on "
@@ -388,31 +476,49 @@ def probe(
     *,
     which_fn: Callable[[str], str | None] = shutil.which,
     run_fn: Callable[[Sequence[str]], ProbeResult] = _default_run,
+    exists_fn: Callable[[str], bool] = os.path.exists,
 ) -> SandboxAvailable:
     """Verify that a usable ``bwrap`` sandbox can be built here, or raise (§8.3).
 
-    Four steps, all fail-closed: locate+pin ``bwrap``, locate+pin ``prlimit``,
-    check the version, then RUN a throwaway sandbox
-    (:func:`functional_probe_argv`) to prove namespace creation works.
+    Five steps, all fail-closed: locate+pin ``bwrap``, locate+pin ``prlimit``,
+    check the version, MEASURE which §8.1 binds this host has (HARDEN-05), then
+    RUN a throwaway sandbox (:func:`functional_probe_argv`) over exactly that set
+    to prove namespace creation works.
+
+    The measurement happens ONCE, here, and the result is carried in the receipt.
+    Re-measuring at compose time would open a window in which the probe attested
+    one mount view and the exec rendered another — the very drift HARDEN-03 shut.
 
     :param which_fn: ``PATH`` lookup, injected for testability. Asked for
         exactly ``"bwrap"`` and ``"prlimit"``; each result is realpath-resolved
         and required to sit in :data:`_TRUSTED_BIN_DIRS`.
     :param run_fn: runner for the two probe command lines, injected so the unit
         tests spawn nothing. Must return a :class:`ProbeResult`.
-    :returns: a :class:`SandboxAvailable` carrying the detected version and the
-        two pinned absolute paths — the same binaries the composed argv runs.
+    :param exists_fn: existence check for the §8.1 binds, injected so unit tests
+        do not depend on the filesystem of whoever runs them. Asked about the
+        template paths and nothing else.
+    :returns: a :class:`SandboxAvailable` carrying the detected version, the two
+        pinned absolute paths — the same binaries the composed argv runs — and
+        the resolved/omitted bind sets.
     :raises SandboxUnavailable: binary absent, untrusted location, lookup
         failed, runner raised, malformed runner result, non-zero exit,
-        unparseable version, version below :data:`MIN_BWRAP_VERSION`, or a
-        namespace that could not be created. There is no other outcome: this
-        function returns a receipt or raises.
+        unparseable version, version below :data:`MIN_BWRAP_VERSION`, no §8.1
+        bind present at all, ``exists_fn`` raised, or a namespace that could not
+        be created. There is no other outcome: this function returns a receipt
+        or raises.
     """
     bwrap_path = _locate(BWRAP, which_fn)
     prlimit_path = _locate(PRLIMIT, which_fn)
     version = _check_version(bwrap_path, run_fn)
-    _check_functional(bwrap_path, run_fn)
-    return _issue(version=version, bwrap_path=bwrap_path, prlimit_path=prlimit_path)
+    system_binds, omitted_binds = _resolve_system_binds(exists_fn)
+    _check_functional(bwrap_path, system_binds, run_fn)
+    return _issue(
+        version=version,
+        bwrap_path=bwrap_path,
+        prlimit_path=prlimit_path,
+        system_binds=system_binds,
+        omitted_binds=omitted_binds,
+    )
 
 
 def compose_exec_argv(
@@ -500,13 +606,30 @@ def compose_exec_argv(
                 f"receipt {label}={program!r} is not an absolute path in "
                 f"{sorted(_TRUSTED_BIN_DIRS)}"
             )
+    # HARDEN-05: the bind set travels on the receipt, so it is re-validated here
+    # exactly like the pinned paths are — a receipt that bypassed `__init__`
+    # (`object.__new__`, `pickle`) could otherwise carry an arbitrary bind and
+    # widen the mount view of an argv still calling itself the §8.1 `ro` profile.
+    # Omission is safe; addition is not. `profiles` refuses the same widening,
+    # but it raises SandboxProfileError, and a forged RECEIPT is an availability
+    # failure — §8.3 must see one reason code, not two.
+    # `getattr` with a default, not attribute access: `slots=True` means a receipt
+    # minted by `object.__new__` (or restored by `pickle`) has NO such attribute
+    # at all, and a bare `available.system_binds` would escape as an AttributeError
+    # instead of the one §8.3 reason code every other failure mode collapses into.
+    binds = getattr(available, "system_binds", None)
+    if not isinstance(binds, tuple) or not binds or not set(binds) <= set(SYSTEM_RO_BINDS):
+        raise SandboxUnavailable(
+            f"receipt system_binds={binds!r} is not a non-empty subset of the §8.1 "
+            f"template {list(SYSTEM_RO_BINDS)}"
+        )
     # `prlimit` is the head of the INNER command, so the host-side check above is
     # not enough: a path bwrap never mounts turns every exec into an ENOENT.
     # `bwrap` is exempt — it runs on the host, outside any mount view.
-    if not _is_in_mount_view(available.prlimit_path):
+    if not _is_in_mount_view(available.prlimit_path, binds):
         raise SandboxUnavailable(
             f"receipt prlimit_path={available.prlimit_path!r} is not inside the sandbox "
-            f"mount view {list(SYSTEM_RO_BINDS)}; the caps run INSIDE the sandbox, so a "
+            f"mount view {list(binds)}; the caps run INSIDE the sandbox, so a "
             "prlimit the sandbox cannot see would fail every exec"
         )
 
@@ -527,4 +650,5 @@ def compose_exec_argv(
         term=term,
         env_extra=env_extra,
         bwrap_path=available.bwrap_path,
+        system_binds=binds,
     )

@@ -329,11 +329,26 @@ def test_the_child_environment_carries_no_host_variables(
 
     Measured on bwrap 0.9.0 during T2.05: without ``--clearenv`` the child got 81
     inherited variables including ``LSASSIST_KIMI_API_KEY`` and ``SSH_AUTH_SOCK``.
+
+    **Read `/proc/self/environ`, never `sh -c env`.** The shell writes variables
+    of its OWN into the environment it then prints, so that spelling measures the
+    shell rather than the child. It is also silently distro-dependent: Debian's
+    `/bin/sh` is dash, which adds only `PWD`, while Arch symlinks `/bin/sh` to
+    bash, which adds `PWD`, `SHLVL` and `_` — measured here, `env -i /bin/sh -c
+    env` prints all three from a COMPLETELY empty environment, so the old
+    assertion passed on Zorin and failed on Garuda while `--clearenv` was working
+    perfectly in both (`env -i /bin/cat /proc/self/environ` is empty). Reading
+    the kernel's own copy removes the interpreter from the measurement.
     """
     outcome = execute(
-        environment, cache_dir, make_manifest(), ["/bin/sh", "-c", "env"], tmp_path / "audit"
+        environment,
+        cache_dir,
+        make_manifest(),
+        ["/bin/cat", "/proc/self/environ"],
+        tmp_path / "audit",
     )
-    names = {line.split("=", 1)[0] for line in outcome.result.result["stdout"].splitlines()}
+    raw = outcome.result.result["stdout"]
+    names = {entry.split("=", 1)[0] for entry in raw.split("\0") if entry}
     assert names <= {"HOME", "LANG", "PATH", "PWD"}, f"leaked into the child: {sorted(names)}"
 
 

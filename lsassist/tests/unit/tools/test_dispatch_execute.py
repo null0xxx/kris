@@ -55,6 +55,7 @@ from lsassist.policy.recheck import OsFsView, RecheckError
 from lsassist.policy.stores import PolicyStores
 from lsassist.policy.token import TokenService
 from lsassist.sandbox.availability import SandboxAvailable, SandboxUnavailable
+from lsassist.sandbox.profiles import SYSTEM_RO_BINDS
 from lsassist.tools.dispatcher import (
     ENV_REBOUND,
     MALFORMED_TOOL_RESULT,
@@ -221,6 +222,11 @@ def fake_receipt() -> SandboxAvailable:
     object.__setattr__(token, "version", (0, 9, 0))
     object.__setattr__(token, "bwrap_path", "/usr/bin/bwrap")
     object.__setattr__(token, "prlimit_path", "/usr/bin/prlimit")
+    # HARDEN-05: a real receipt carries the bind set `probe` measured on the host.
+    # Stated as the full §8.1 template because that is the host these unit tests
+    # describe; the resolved-set behaviour is exercised in tests/unit/sandbox/.
+    object.__setattr__(token, "system_binds", SYSTEM_RO_BINDS)
+    object.__setattr__(token, "omitted_binds", ())
     object.__setattr__(
         token,
         "_issuance",
