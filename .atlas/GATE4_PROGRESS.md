@@ -478,9 +478,119 @@ same false docstring claim, which is why they run blind.
   (`--clearenv` was correct on both distros). This is the trap
   `PROMPT_NEXT_SESSION.md` §5 already documented.
 
+## T3.04 — `18d15d6` — the six §6.4 read-only tools and the in-process route
+
+Six tools: `fs.read`/`fs.list`/`fs.find` (§6.4 `proc: none` — no child process,
+so nothing for bwrap to isolate; their protection is the path chain) and
+`sys.info`/`pkg.query`/`git.read` (`spawn_argv`, T3.03's route unchanged).
+
+**`dispatcher.run()` gained an in-process branch** — human-approved before the
+work started — taken when `capabilities.proc is NONE` **and** a handler was
+wired. `proc: none` alone is necessary but NOT sufficient: §6.4 gives
+`fs.write`/`fs.patch` the same flag and T3.03 already routes those through `ws`.
+Both routes converge on the same §6.3 step 8-9 code: one result validation, one
+cap, one journal entry.
+
+**§7.5 step 6 is now closed for READERS.** Open relative to a pinned parent
+`dir_fd` with `O_NOFOLLOW`, `fstat` the fd against approval-time
+`(st_dev, st_ino)`, read from THAT fd. Never a second `open` by name — an
+intermediate revision did exactly that and reopened the window it had just shut.
+
+**Gate state:** pytest **2819 passed / 0 failed / 0 skipped** · ruff clean ·
+`mypy --strict` clean (12·7·8·5·8·4·1·1) · **TCB LOC 5480 / 6000** ·
+**100% branch, 0 partial, 0 pragmas** on both blocking floors · handlers **94%**
+(plan bar ≥90%) · **15 mutants run, 15 killed**.
+
+### 🔍 Two isolated 4R rounds — and what a green suite was hiding
+
+**ROUND 1** (`review-206fd547f9372329`) — a **BLOCKER and five CRITICALs**
+against a suite that was 2792 green with 100% branch on both floors. This is the
+**fifth** precedent on this repository. Every finding reproduced before its fix:
+
+- **BLOCKER — `path_scope` was declared everywhere and consumed NOWHERE.** R2's
+  `_WRITE_INTENT_TOOLS` is `{fs.write, fs.patch}`; `AUTO_READ` PROCEEDs at once;
+  `canonicalize` never sees a workspace. The narrow §7.3 blocklist was the ONLY
+  bound on a read. Measured: `fs.read ~/.netrc` → `machine api.example.com
+  password HUNTER2`. Everything unenumerated — `~/.kube/config`, `~/.npmrc`,
+  `~/.docker/config.json`, shell history — was readable, unsandboxed.
+- **The §19 canary was checked only in `fs.find`'s content branch** and only on
+  `fs.list`'s root. Measured: `--mode name --pattern id_rsa` returned the
+  honeyfile's PATH with no alert. Search-by-name is the natural reconnaissance
+  vector and it was the unmonitored one.
+- **§7.3 DENY was checked only on the walk root.** Measured: `--mode content`
+  returned `['proj/.env']`, having opened and read it. `deny_match` matches
+  `.env`/`.git` by segment at any depth — the rule existed; nobody asked it below
+  the root.
+- **`fs.list`'s truncation path called `queue.clear()`**, dropping open directory
+  fds so the `finally` drain closed nothing. **Measured: 56 leaked descriptors**
+  in one call. `fs_find` hits the same condition without `clear()` and is
+  correct — the divergence is what proved it a defect, not a tradeoff.
+- **`os.listdir(fd)` was unguarded** — a raw `OSError` escaped `run()` past step
+  9: no ToolResult, no journal record. The same class T3.03 closed twice.
+- **The in-process route enforced no timeout at all.**
+
+**ROUND 2** (`review-6106479ef0cce441`) — no BLOCKER, no security CRITICAL; R1
+verified all six fixes hold. **One CRITICAL, found by two lenses independently:**
+`check_deadline` ran once per DIRECTORY, so one wide directory outran the budget
+with the clock consulted once. Plus `HANDLER_UNAVAILABLE` conflating a wiring
+fault with a runtime crash, `duration_ms=0` on every refusal including
+`TIMED_OUT`, an uncharged `st_size` width, and a `fs_find` module docstring still
+describing the canary check it had moved.
+
+### ⚠️ Review authority: ESCALATED, not approved — read this before trusting the receipt
+
+```
+finalize → state: escalated   budget_exceeded: spent 349, total 200
+validate --gate pre-commit → scope-changed, allowed: false,
+                             action: explicit-maintainer-action
+```
+
+Committed under that **explicit maintainer action**, which the gate itself named.
+The correction was forecast at **180** changed lines and cost **349**: the source
+estimate was right, the test estimate was not. In this repository tests run 3-4×
+the source they cover, and the scoped fix validator found two more gaps
+mid-correction. **A forecast is a commitment, not an estimate** — the facade
+measures the real diff and escalates on the difference.
+
+The scoped fix validator returned `original_criteria: passed=false` and was
+RIGHT: `_ENTRY_OVERHEAD_CHARS` was still wrong (44, then 42; measured **38**),
+and the `fs_read`/`open_pinned_dir` duplication residual was undeclared. Both
+closed in the same transaction. The constant is now **pinned by a test** that
+derives it from `json.dumps` of the real entry shape.
+
+**Not split into three commits**, though R2 flagged the size in BOTH rounds
+(`worsened` the second time). Each part would be RED alone — `load_registry()`
+raises without `manifests/`, and `test_the_batch_is_exactly_the_six_read_only_tools`
+pins an exact set — so splitting meant re-cutting verified security code to
+satisfy process. **The lesson applies forward to T3.05/T3.06, not backward.**
+Next time: run `review start` in STAGES within one task (contract+dispatcher
+first, handlers second) so each candidate keeps its own budget.
+
+### 🔖 Named residuals from T3.04
+- **`fs_read.read_file` duplicates `_common.open_pinned_dir`'s pin sequence.**
+  Declared in its module docstring. Factoring a security-critical open sequence
+  does not belong inside a bounded correction.
+- **§14.1's `tool_result` records `profile` as `ro`/`ws` only**, so an in-process
+  read that entered NO sandbox is indistinguishable from a sandboxed one in the
+  audit record. A third value ripples through contracts/policy/kernel.
+- **§19 wants audit alert + SESSION FREEZE + user notice** on a canary read. A
+  handler can only refuse: no freeze state exists in `kernel.states.State` and
+  `audit.schema.AuditEvent`'s vocabulary is closed. **T5.12 owns the rest.**
+- **§6.4's `pkg.query` names `dpkg-query`/`apt-cache`, absent on Arch** — the same
+  class as HARDEN-05's `/etc/alternatives`, and the second §6.4 distro
+  assumption. Failure is loud (non-zero exit, journalled), never silently wrong.
+- `sys.info os_release` reads **`/usr/lib/os-release`**: §8.1 binds `/usr` but not
+  `/etc`, so the obvious `/etc` spelling would ENOENT on every host.
+- **`git.read`'s `path` is optional**, so a caller must declare
+  `path_args=["path"]` even when passing none — the exact shape T3.03 named on
+  `test.run`.
+- No test varies file SIZE, so the size-digit term of the truncation charge is
+  exercised but not proven proportional.
+
 ### ⏭️ NEXT frontier
-Recompute the closure yourself. At `18ecc0e` the ready set is **T3.04** (read-only
-tool batch — the first task with real handlers, and the owner of the fstat-pinning
-obligation above), **T3.09**/**T3.11** (provider adapters), **T4.03** (audit
-reader), **T4.04**, **T4.07**, **T4.10**. T3.04 is now actually verifiable: before
-HARDEN-05 every exec was BLOCKED.
+Recompute the closure yourself. At `18d15d6` the ready set is **T3.05** (`fs.write`
+— and note it is `proc: none` too, so it is the first WRITE tool to face the
+in-process routing question), **T3.06**, **T3.09**/**T3.11** (provider adapters),
+**T4.03** (audit reader), **T4.04**, **T4.07**, **T4.10**. T3.04's handlers are
+built but **nothing in production wires them yet** — `dispatcher.run(handler=…)`
+has no caller outside the tests. The assembly point is **T5.12** (session engine).
