@@ -587,7 +587,7 @@ first, handlers second) so each candidate keeps its own budget.
 - No test varies file SIZE, so the size-digit term of the truncation charge is
   exercised but not proven proportional.
 
-## 🚧 T4.04 — IN FLIGHT, NOT COMMITTED — reviewed, fixes pending
+## 🚧 T4.04 — IN FLIGHT, NOT COMMITTED — reviewed, **all six findings FIXED**
 
 **If you are reading this after a lost session: the code is on disk, uncommitted,
 and the review has already run. Do not rebuild it and do not re-review it before
@@ -650,7 +650,21 @@ OUTSIDE the transaction and the corrected candidate gets a fresh `review start`.
 **This is the T3.04 lesson actually applied.** There, the overrun was discovered
 AFTER the budget was spent; here it was forecast BEFORE.
 
-### 🔧 The fix list, in severity order
+### ✅ ALL SIX FIXED AND MUTATION-VERIFIED (2026-07-30)
+
+Measured after the fixes: pytest **2921 passed / 0 failed / 0 skipped** · ruff
+clean · `mypy --strict` clean on all nine TCB targets · **zero pragmas** in
+`recovery` · TCB LOC **5955/6000** · §23.1 **100% branch, 0 partial** across five
+packages · `recovery` alone **100%** · **14 mutants run, 14 killed**.
+
+⚠️ **`review-3972124de4485ae8` is now STALE** — the fixes changed the tree, so its
+frozen target no longer matches. Do NOT try to finalize it. A fresh
+`review start` is required, and that is the next action.
+
+⚠️ **Named residual: TCB LOC 5955/6000** — 45 lines from the §23.1 target (hard
+stop 8000, so not blocking). `recovery` added ~370. The next TCB package crosses it.
+
+### 🔧 The fix list, in severity order — every item DONE
 
 1. **A fresh index per `create()` call** (per-checkpoint temp `GIT_INDEX_FILE`,
    removed after). Closes the accumulation AND the concurrency hazard in one

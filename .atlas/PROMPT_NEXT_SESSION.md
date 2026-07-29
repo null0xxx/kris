@@ -3,219 +3,230 @@
 > **How to use.** Open a new session at `/home/null/Desktop/LinuxSec` (the git root,
 > **not** `lsassist/`) and paste everything below the line as a single message.
 >
-> Written 2026-07-28 at commit `e2e7522`, after T3.03. Every number below is a
-> **HYPOTHESIS TO FALSIFY**, never a fact to trust — §1 says why.
+> Written 2026-07-30 at commit `d98851e`, with **T4.04 uncommitted on disk and
+> already corrected**. Every number below is a **HYPOTHESIS TO FALSIFY** — §1 says why.
 
 ---
 
-ვმუშაობთ პროექტზე `/home/null/Desktop/LinuxSec` (git root). ქართულად ვსაუბრობთ.
+ვმუშაობთ პროექტზე `/home/null/Desktop/LinuxSec` (git root). ქართულად ვსაუბრობთ,
+რეპოს ყველა artifact ინგლისურად.
 
-## 0. სამი წესი, რომელიც ყველაფერზე მაღლა დგას
+## 0. ოთხი წესი, რომელიც ყველაფერზე მაღლა დგას
 
-1. ამ მანქანაზე `gentle-ai`/ecosystem დაყენებულია, მაგრამ **ამ პროექტში `sdd-*`
-   skill-ებს ნუ გამოიყენებ.** `SPEC.md` და `IMPLEMENTATION_PLAN.md` **გაყინულია**
-   და ერთადერთი ავტორიტეტული წყაროა.
+1. **`gentle-ai` პლაგინი სავალდებულოდ და სრულფასოვნად გამოიყენე.** ის დაყენებულია
+   (`gentle-ai 2.2.0`, `review mode: on`). **ყოველი task-ის candidate გაივლის native
+   review-ს:** `review start` → იზოლირებული 4R ლინზები → `capture-result` → საჭიროებისას
+   `review-refuter` → `capture-evidence` → `finalize` → `validate --gate pre-commit`.
+   Receipt-ის გარეშე commit **არ ხდება** — გამონაკლისი მხოლოდ შენი ცალსახა
+   `explicit-maintainer-action`-ია, და ის commit-ის ტექსტში პირდაპირ იწერება.
+   **მაგრამ `sdd-*` skill-ებს ამ პროექტში ნუ გამოიყენებ** — `SPEC.md` და
+   `IMPLEMENTATION_PLAN.md` **გაყინულია** და ერთადერთი ავტორიტეტული წყაროა; SDD
+   მათ პარალელურ, კონკურენტ artifact-ებს შექმნიდა. ანუ: **review machinery დიახ,
+   SDD phases არა.**
 2. **engram-ში მხოლოდ მდგრადი ფაქტები.** venv-ის გზა, bare-pytest-ის ნიუანსი, CI
-   job-ები, TCB LOC ზღვრები, review-loop-ის ქცევა. **პროგრესის რიცხვები არასოდეს** —
-   git არის ჭეშმარიტების წყარო და ყოველ სესიაზე თავიდან იზომება.
+   job-ები, TCB ზღვრები, review-ის ზუსტი ინვოკაცია. **პროგრესის რიცხვები
+   არასოდეს** — git არის ჭეშმარიტების წყარო და ყოველ სესიაზე თავიდან იზომება.
 3. **კრიტიკოსების ეტაპზე იზოლირებული ქვე-აგენტები:** `review-risk`,
    `review-reliability`, `review-resilience`, `review-readability` — თითოეული
-   მხოლოდ {frozen intent, ერთი diff, ერთი ლინზა, floors} ხედავს, **არასოდეს
-   სხვისი findings**. მერე `review-refuter` findings-ების შესამოწმებლად.
+   მხოლოდ {frozen intent, ერთი diff, ერთი ლინზა, floors} ხედავს, **არასოდეს სხვისი
+   findings**. მერე `review-refuter`.
+4. **`review start`-ის შემდეგ candidate-ის ფაილს ნუ შეეხები**, სანამ
+   `capture-result` არ დასრულდა — რედაქტირება გაყინვას აუქმებს. ეს ამ სესიაზე
+   ორჯერ დაგვიჯდა.
 
 ## 1. ჯერ გაზომე — არ დაიწყო კოდის წერა
 
-1. `git log --oneline -8` — **git არის ჭეშმარიტების წყარო**, თუ ledger-ს ეწინააღმდეგება.
-   მოსალოდნელი HEAD: `e2e7522` (`docs:`), მის ქვეშ `d4f12c7` (`T3.03`).
-2. წაიკითხე `.atlas/GATE4_PROGRESS.md` — Gate-4-ის ავტორიტეტული ledger.
-3. **თვითონ გაზომე ყველა floor.** ნუ ენდობი დოკუმენტირებულ რიცხვს:
+```bash
+cd /home/null/Desktop/LinuxSec && git log --oneline -6 && git status --short
+```
+
+**მოსალოდნელი HEAD: `d98851e`**, და **სამუშაო ხე არაა სუფთა** — T4.04 დისკზეა:
+`recovery/{manifest,checkpoints}.py`, `tests/{unit,integration}/recovery/`, პლუს
+შეცვლილი `ci.yml`, `pyproject.toml`, `test_coverage_gate.py`.
 
 ```bash
 cd /home/null/Desktop/LinuxSec/lsassist
-V=~/.local/share/lsassist/venv/bin     # ADR-005: venv is NOT in the repo
+V=~/.local/share/lsassist/venv/bin     # uv-ის standalone CPython 3.12.13
 
-$V/python -m pytest                     # bare! `pytest -q` yields -qq (addopts already
-                                        # has -q) and SUPPRESSES the pass/fail summary
+$V/python -m pytest                    # bare! `-q` ორმაგდება და summary იკარგება
 $V/python -m ruff check src tests
-for p in contracts config policy sandbox kernel audit; do $V/python -m mypy --strict src/lsassist/$p; done
+for p in contracts config policy sandbox kernel audit recovery; do $V/python -m mypy --strict src/lsassist/$p; done
 $V/python -m mypy --strict src/lsassist/tools/dispatcher.py
 $V/python -m mypy --strict src/lsassist/tools/result.py
 python3 scripts/loc-count --manifest scripts/tcb-loc-manifest.txt --target 6000 --hard-stop 8000
 
-# §23.1 package floor
+# §23.1 — ხუთი პაკეტი, `recovery` T4.04-ზე შემოვიდა
 $V/python -m coverage run --branch \
-  --source=src/lsassist/kernel,src/lsassist/policy,src/lsassist/sandbox,src/lsassist/audit \
-  -m pytest tests/unit tests/property && $V/python -m coverage report
+  --source=src/lsassist/kernel,src/lsassist/policy,src/lsassist/sandbox,src/lsassist/audit,src/lsassist/recovery \
+  -m pytest tests/unit tests/property tests/integration/recovery && $V/python -m coverage report
 
-# the TWO TCB files inside a non-TCB package (§2.3) — their own blocking job
+# §2.3-ის ორი TCB ფაილი არა-TCB პაკეტში — საკუთარი blocking job
 $V/python -m coverage run --branch \
   --source=lsassist.tools.dispatcher,lsassist.tools.result \
   -m pytest tests/unit/tools && $V/python -m coverage report
 ```
 
-**მოსალოდნელი (გაზომილი 2026-07-28, `d4f12c7`):** pytest **2632 passed, 0 failed** ·
-ruff clean · `mypy --strict` clean (contracts 12 · config 7 · policy 8 · sandbox 5 ·
-kernel 8 · audit 4 · dispatcher 1 · result 1) · **TCB LOC 5359 / 6000** (hard stop
-8000) · **100% branch, 0 partial, 0 pragmas** ორივე იატაკზე · CI **7 job**
-(`ruff`, `unit`, `loc-count`, `tcb-loc`, `coverage`, `dispatcher-coverage`,
-`integration`).
+**მოსალოდნელი (გაზომილი 2026-07-30):** pytest **2921 passed, 0 failed, 0 skipped** ·
+ruff clean · `mypy --strict` clean ცხრავეზე · **TCB LOC 5955 / 6000** (hard stop
+8000) · §23.1 **100% branch, 0 partial** · dispatcher+result **100%** ·
+`recovery` თავად **100%, pragma ნული**.
 
-**თუ რომელიმე რიცხვი არ ემთხვევა — გაჩერდი და მომახსენე.** ნუ ააშენებ აუხსნელ delta-ზე.
+**თუ რომელიმე რიცხვი არ ემთხვევა — გაჩერდი და მომახსენე.**
+
+⚠️ **venv არ არის რეპოში და 3.12-ია.** თუ `No module named pytest` — venv გატეხილია
+დისტრიბუტივის Python-ის განახლებით. **3.14-ზე ნუ ააშენებ**: `requirements.lock`
+თითო პაკეტზე თითო cp312 wheel hash-ს აპინავს და `--require-hashes` cp314-ს
+სამართლიანად უარყოფს. სწორი გზა:
+`uv python install 3.12 && /home/null/.local/share/uv/python/cpython-3.12-linux-x86_64-gnu/bin/python3.12 -m venv ~/.local/share/lsassist/venv`
+მერე `pip install --require-hashes -r requirements.lock -r requirements-dev.lock && pip install -e . --no-deps`.
 
 ## 2. სად ვართ
 
-- **30 / 70 task.** Phase 1 ✅ (11/11) · Phase 2 ✅ (13/13) · Phase 3: 4/14 ·
-  Phase 4: 2/12 · Phase 5: 0/14 · Phase 6: 0/6
-- აშენებული: `contracts` `config` `policy` `sandbox` `kernel` `audit`,
-  `tools` (registry + dispatcher + result), `providers` (base)
-- ცარიელი scaffold: `recovery` `memory` `skills` `tutor` `coding` `cli`
-- **`lsassist` ჯერ არ ეშვება** — `__main__.py` არის T1.02-ის stub. ეს არაა
-  დეფექტი; §2.2-ის dependency direction-ია. შეკრების წერტილები: **T3.02+T3.03
-  dispatcher** (გაკეთდა) და **T5.12 session engine**.
-- `main` == `origin/main` == `e2e7522`
+- **32 / 70 task.** Phase 1 ✅ (11/11) · Phase 2 ✅ (13/13) · Phase 3: 5/14 ·
+  Phase 4: 2/12 (+T4.04 დისკზე) · Phase 5: 0/14 · Phase 6: 0/6
+- აშენებული: `contracts` `config` `policy` `sandbox` `kernel` `audit`, `tools`
+  (registry + dispatcher + result + **handlers**), `providers` (base),
+  **`recovery` (T4.04, დაუკომიტებელი)**
+- ცარიელი scaffold: `memory` `skills` `tutor` `coding` `cli`
+- **`lsassist` ჯერ არ ეშვება.** T3.04-ის handler-ები აშენებულია, მაგრამ
+  production-ში მათ **არავინ აერთებს** — `dispatcher.run(handler=…)`-ს ტესტების
+  გარეთ გამომძახებელი არ ჰყავს. შეკრების წერტილი **T5.12** (session engine).
+- `main` == `origin/main` == `eeae643` (**push ჩამორჩენილია 6 commit-ით** — push
+  მხოლოდ ცალკე თხოვნით)
 
-## 3. შემდეგი frontier
+## 3. პირველი საქმე: T4.04 დაასრულე
 
-გამოთვალე **თვითონ**, `IMPLEMENTATION_PLAN.md`-ის `Depends on` გრაფის ტრანზიტული
-ჩაკეტვით — რიგი **ტოპოლოგიურია**, არა ფაზების მიხედვით. `e2e7522`-ზე მზადაა
-**ექვსი**:
+**T4.04 კოდურად მზადაა და უკვე გასწორებულია.** Review გაიარა, **ექვსი severe
+finding** იპოვა (ერთი BLOCKER, ოთხი CRITICAL), ყველა გასწორებულია და 14 მუტანტით
+დადასტურებული. სრული ისტორია `.atlas/GATE4_PROGRESS.md`-ში.
 
-| Task | რა | რატომ ახლა |
-|---|---|---|
-| **T3.04** | read-only tool batch: `fs.read` `fs.list` `fs.find` `sys.info` `pkg.query` `git.read` | **პირველი task რეალური handler-ებით**, და T3.03-ის დასახელებული ვალდებულების მფლობელი. ხსნის T3.05→T3.06→T3.07-ს |
-| T3.09 / T3.11 | Kimi / Ollama adapter | T3.08-ზეა დამოკიდებული, დამოუკიდებელი შტოა |
-| T4.03 | audit reader (`lsassist audit show`) | T4.02-ზეა |
-| T4.04 / T4.07 / T4.10 | recovery checkpoint / memory store / skills loader | T4.02 (+T2.02/T1.07/T2.01) |
+⚠️ **`review-3972124de4485ae8` მოძველებულია** — გასწორებებმა ხე შეცვალა, ანუ მისი
+target აღარ ემთხვევა. **ნუ სცადებ მის finalize-ს.** საჭიროა **ახალი `review start`**.
 
-**რეკომენდაცია: T3.04.** ის ხურავს ჯაჭვს, რომელზეც ყველაზე მეტი რამაა
-დამოკიდებული, და ის არის ერთადერთი, ვინც T3.03-ის cross-phase ვალდებულებას ფლობს.
+ზუსტი რიგი:
 
-### T3.04 ატარებს ჩაწერილ ვალდებულებებს — შეამოწმე თითოეული
+```bash
+gentle-ai review start --cwd /home/null/Desktop/LinuxSec        # lineage + target
+gentle-ai review start --cwd /home/null/Desktop/LinuxSec \
+  --contract gentle-ai.review-integration/v1 --target <target> --projection workspace
+# → candidate_diff (base64), changed_path_manifest, artifact_subjects (თითო ლინზას თავისი subject_hash)
+```
 
-- **§7.5 step 6 write-only-ია (SPEC:564).** T3.03 read/exec tool-ებზე
-  `Verification.NOT_APPLICABLE`-ს აბრუნებს — **განზრახ**, რომ ხარვეზი
-  **დასახელებული** დარჩეს და არა pass-ად შენიღბული. **T3.04-მა უნდა დახუროს:**
-  handler-მა `os.open(path, O_NOFOLLOW|…, dir_fd=canonical_parent)` უნდა გააკეთოს
-  და მერე **იმავე fd-ს** `fstat`-ი approval-დროინდელ node identity-ს შეადაროს
-  (`normalized.path_snapshots`-ში უკვე დევს). სხვაგვარად same-path file-swap
-  TOCTOU ღიად რჩება.
-- **canary honeyfiles (§19 scenario 1).** `fs.read` T1.07-ის `canary_registry()`-ს
-  (path + sha256) უნდა შეამოწმოს; honeyfile-ზე read → `CANARY_TRIPPED`, session
-  freeze, audit alert, **content არასოდეს ბრუნდება**.
-- **§7.3 DENY handler-side double-check.** dispatcher უკვე ამოწმებს, მაგრამ §7.5
-  ჯაჭვი ორმაგ შემოწმებას ითხოვს.
-- `fs.read`: utf-8 `errors=replace`, binary → hex head ≤ 4 KB.
-- ყველა manifest: class `AUTO_READ`, caps/limits **§6.4 ცხრილიდან verbatim**.
+მერე ოთხი ლინზა **იზოლირებულად**, თითოეულს `GENTLE_AI_REVIEW_BINDING`-ით და
+**მხოლოდ თავისი** `subject_hash`-ით. მერე:
 
-### T3.03-ის დასახელებული residual-ები, რომლებიც T3.04/T3.06-ს ეხება
+```bash
+gentle-ai review capture-result --lineage <l> --target <t> --lens <lens> --order <n> --input <file> --cwd .
+# severe + inferential finding → gentle-ai review schema refuter; შედეგი --refuter <file>-ით
+gentle-ai review finalize --cwd . --captured-results        # → state: validating, აბრუნებს store_revision
+gentle-ai review capture-evidence --cwd . --lineage <l> --target <t> --expected-revision <store_revision> --input <evidence.txt>
+gentle-ai review finalize --cwd . --captured-results --captured-evidence
+gentle-ai review validate --gate pre-commit --cwd .          # უნდა იყოს result: allow
+```
 
-- **§6.4-ის `test.run` ამჟამად საერთოდ არ dispatch-დება.** ის `write_scoped`-ია
-  argv-ით და **path არგუმენტის გარეშე** — ზუსტად ის ფორმა, რომელსაც T3.02-ის
-  guard უარყოფს („declares capabilities.fs=write_scoped but no path_args were
-  declared"). **T3.06-ის საზღვარია:** ან target გამოცხადდეს, ან guard-ს დასჭირდეს
-  „write_scoped without a declared target" carve-out.
-- **§7.2 R2 უშვებს დამტკიცებულ workspace-გარე write-ს, რომელსაც V1-ის არცერთი
-  პროფილი ვერ გამოხატავს.** T3.03 step 5-ზე უარყოფს `workspace_scope`-ით. სრული
-  გადაწყვეტა §7.2 ან §8 SPEC-ცვლილებაა — **ჩემი თანხმობით**.
-- **§6.5-ს ერთი `evidence` ობიექტი აქვს**, ანუ multi-path write tool მხოლოდ
-  პირველი სამიზნის snapshot-ს აქვეყნებს.
-- **§6.5-ს არ აქვს „პროცესი არ გაშვებულა" ფორმა**: BLOCKED შედეგი `exit_code=0`-ს
-  წერს და აზრს `status=error` + `error.kind` ატარებს.
-- ბავშვს `LC_ALL`/`TERM` არ ეძლევა, თუმცა §8.3 უშვებს — T3.02-მა `env_digest`
-  მათ გარეშე დააკავშირა.
-- `create_if_missing` მოითხოვს `fs=write_scoped`-ს, მაგრამ manifest ვერ არჩევს
-  `fs.write`-ს (ქმნის) `fs.patch`-ისგან (არ ქმნის) — T3.04/T3.05-ის საზღვარია.
-- dispatcher-ის token-შემოწმება **pre-filter**-ია, არა I15 gate:
-  `machine._g_valid_token`-ის 4 პირობიდან 2-ს ამოწმებს; consent liveness და §4.7
-  replay verdict kernel-ის მდგომარეობაა (T5.12).
+**Reviewer artifact-ის ზუსტი ფორმა** (`gentle-ai review schema reviewer`):
+top level `subject_hash`, `inspection{status,paths}`, `findings[]`, `evidence[]`
+— **`evidence` მასივია**. finding-ის ველები **ზუსტად** `location` (`path:line`),
+`severity`, `claim`, `evidence_class` (`deterministic|inferential|insufficient`),
+`causal_disposition`, `proof_refs[]`. სხვა ველი (`file`, `detail`, `title`)
+**უარყოფილია**. validator-ის `follow_ups` ელემენტები `{observation, proof_refs}`.
 
-## 4. როგორ ვმუშაობთ (სავალდებულო)
+მერე **ერთი `T4.04:` commit** + ცალკე `docs:` ledger-ისთვის.
+
+## 4. მერე: frontier
+
+**თვითონ გამოთვალე**, `IMPLEMENTATION_PLAN.md`-ის `Depends on` გრაფის ტრანზიტული
+ჩაკეტვით. ⚠️ **ledger-ის frontier-ის ხაზი ერთხელ უკვე ტყუოდა** — T3.05 „მზადად"
+იყო დასახელებული, მაშინ როცა `Depends on: T3.04, T4.04` და მე მხოლოდ პირველი
+წავიკითხე. **მხოლოდ პირველ დამოკიდებულებას ნუ წაიკითხავ.**
+
+T4.04-ის ჩაკომიტების შემდეგ **T3.05 იხსნება** (`fs.write`, `fs.patch`,
+`git.worktree`). ის §6.4-ით `write_scoped / none / none`-ია, ანუ **`proc: none`
+პირველი write ინსტრუმენტია** და იმავე მარშრუტიზაციის კითხვას შეხვდება, რაც T3.04-ს:
+`dispatcher.run()`-ის in-process შტო `proc is NONE **და** handler მიწოდებული`-ზე
+ირთვება, ანუ write ინსტრუმენტს handler-ის მიწოდება in-process გზაზე გადაიყვანს.
+**ეს გადაწყვეტილებაა, არა დეტალი** — გადამოწმდი.
+
+## 5. როგორ ვმუშაობთ (სავალდებულო)
 
 **თითო task:** ground → **RED first** (აჩვენე ჩავარდნილი output) → GREEN →
-დეტერმინისტული floors → **იზოლირებული ადვერსარიული კრიტიკოსები** → refute →
-refine ≤2 → **მუტაციები** → commit.
+დეტერმინისტული floors → **იზოლირებული ადვერსარიული 4R** → refute → **მუტაციები**
+→ commit.
 
-### მწვანე სუიტა არაფერს ამტკიცებს — ოთხი პრეცედენტი
+### მწვანე სუიტა არაფერს ამტკიცებს — ექვსი პრეცედენტი
 
-ამ პროექტზე **ოთხჯერ** თანაარსებობდა 100% branch + `mypy --strict` + CRITICAL:
+100% branch + `mypy --strict` + CRITICAL **ექვსჯერ** თანაარსებობდა:
+**T4.01** (GPG გასაღები გაუშიფრავი) · **T3.02** (§7.3 DENY symlink-ით შემოვლილი) ·
+**T4.02** (U+2028 ერთ record-ს ორად ყოფდა) · **T3.03** (timeout გვერდით ავლილი,
+`timeout_s=1` → 20 წამი) · **T3.04** (`path_scope` არსად არ აღსრულდებოდა —
+`fs.read ~/.netrc` პაროლს აბრუნებდა) · **T4.04** (2 GB-ის ჩარჩენა + index-ის
+დაგროვება, `tree ≠ entries`).
 
-- **T4.01:** 86 მწვანე ტესტი, 100% branch — GPG კერძო გასაღები სრულიად გაუშიფრავი
-- **T3.02:** მწვანე სუიტა — §7.3-ის აბსოლუტური DENY symlink-ით შემოვლილი
-- **T4.02:** მწვანე სუიტა — U+2028 ერთ record-ს ორ ხაზად ყოფდა
-- **T3.03:** მწვანე სუიტა, 100% branch, 0 partial — და **ოთხი CRITICAL**:
-  wall-clock timeout სრულიად გვერდით ავლილი (`timeout_s=1` → დაბრუნდა **20.00
-  წამში**), მოდელის argv env-სინტაქსად წაკითხული (`IndexError`, უტიპო, audit-ის
-  გარეშე), და **ორი უაudit-ო გაქცევა** უკვე გაშვებული tool-ის შემდეგ.
+### ხუთი გაკვეთილი, რომელიც ამ სესიამ მოიტანა — გამოიყენე
 
-Coverage **შესრულებას** ზომავს, არა **მტკიცებას** (ADR-011-ის საკუთარი „Named
-limitation"). ხაზი სრულდებოდა; უბრალოდ ვერცერთი შემავალი მას სწორ პასუხს არ სთხოვდა.
-
-### T3.03-ის ახალი გაკვეთილები — გამოიყენე ისინი
-
-- **ჩავარდნის ერთი ფორმა red-ი არაა.** T4.02-ზე FIFO-მ სუიტა **ჩაკიდა**. T3.03-ზე
-  timeout-ის დეფექტი **ჩაკიდებით** ვლინდებოდა, არა წითლით. ყოველ spawn-იან ტესტს
-  **საკუთარი ზღვარი** დაუწესე და გაზომე რეალური elapsed time.
-- **substring-grep-ით დაწერილი „N call site" ტესტი უსარგებლოა injected default-ზე.**
-  `grep 'spawn_capped('` `src/`-ში მხოლოდ **`def`-ს** იჭერდა, რადგან რეალური
-  გამოძახება `runner(...)`-ია. ნულ caller-ზეც გაივლიდა. **გამოიყენე `ast.walk`**
-  (`ast.Name`/`ast.Attribute`/`ast.ImportFrom`) და **სიმრავლეთა ტოლობა** (`==`,
-  არა `<=`), რომ სანქცირებული მითითების გაქრობაც ჩავარდეს.
-- **გარანტია სტრუქტურული გახადე, არა დოკუმენტირებული.** `run()`-ის `audit`
-  არჩევითი იყო → „ყოველი გაშვება ჩაწერილია" იმის თვისება ხდებოდა, ვინც არგუმენტი
-  გაიხსენა. ახლა სავალდებულოა. იგივე იდიომია `compose_exec_argv`-ის receipt-ი.
-- **ყოველი `except`-ის მიმართულება გადაამოწმე.** T3.03-ის სამი CRITICAL-იდან
-  ორი იყო „კოდი მხოლოდ იქ იცავს, სადაც შეცდომას ველოდი".
-- **ყოველი material claim თვითონ რეპროდუცირე.** R4-ის HIGH („bwrap-ის
-  `--new-session` პროცესს killed group-იდან აშორებს") **გაზომვით გაბათილდა**:
-  3 sleeper რეალურ sandbox-ში, `timeout_s=2` → 2.00 წამი, rc 137, ნული გადარჩენილი.
-- **ყოველი შესწორების შემდეგ mutation.** T3.03-ზე 7 fix → 7 mutant → 7 killed.
-  ადრე გადარჩენილმა mutant-მა **ორჯერ** გამოააშკარავა არასრული შესწორება.
-
-### ოპერაციული ნიუანსი კრიტიკოსებზე
-
-`review-risk`, `review-readability` და `review-resilience` თავიანთ prompt-ში
-`GENTLE_AI_REVIEW_BINDING`-ს ეძებენ (`subject_hash`, `lineage_id`, …). მისი
-გარეშე ისინი **ჩერდებიან** native JSON-ის გამოცემამდე და findings-ს **პროზად**
-აბრუნებენ. findings გამოსადეგია — უბრალოდ preamble-ს ელოდე და გაშვება
-წარუმატებლად ნუ ჩათვლი. `review-reliability` და `review-refuter` სუფთა სიას
-აბრუნებენ.
+1. **Correction budget ვალდებულებაა, არა შეფასება.** `min(200, ceil(lines/2))` და
+   START-ზე იყინება. ამ რეპოში **ტესტები კოდზე 3-4-ჯერ მეტია.** თუ პატიოსანი
+   რიცხვი ბიუჯეტს აჭარბებს — **transaction საერთოდ ნუ გახსნი**; გაასწორე გარეთ და
+   ხელახლა გაატარე review. T3.04-ზე 180 ვიწინასწარმეტყველე, 349 დაჯდა, authority
+   escalate-ი გაკეთდა.
+2. **R2-ის „ზედმეტად დიდი candidate" წამყვანი ინდიკატორია, არა სტილი.** T3.04
+   (3789 ხაზი): BLOCKER + 5 CRITICAL, ბიუჯეტი აფეთქდა. T4.04 (1785): BLOCKER + 4
+   CRITICAL, ბიუჯეტი კომფორტში. **`review start` ეტაპობრივად** გაუშვი ერთი task-ის
+   შიგნით, თუ candidate 2000 ხაზს უახლოვდება.
+3. **ჩემი „ოპტიმიზაცია" ორჯერ იყო დეფექტი.** T4.04-ის „თითო workspace-ზე თითო
+   index" cross-workspace გაჟონვას ხურავდა — და მისი მდგრადობა `tree ≠ entries`
+   გახდა. **დაფიქრდი, რას ინახავს მდგომარეობა და რამდენ ხანს.**
+4. **მუტაცია სუსტ ტესტს იჭერს, არა მხოლოდ არასრულ გასწორებას.** ამ სესიაზე
+   **სამჯერ**. ბოლო: მუდმივად ამოწურული `store_size` stub „თითო-თითოს" და
+   „ყველას" ვერ განასხვავებდა. **ყოველი გასწორებაზე მუტანტი, და მუტანტი უნდა
+   მოკლას *დასახელებულმა* ტესტმა.**
+5. **Integration იჭერს, რასაც stub ვერ.** ორჯერ T4.04-ზე: shadow store არ
+   ინიციალიზდებოდა (`fatal: not a git repository`), და `git init` უარს ამბობს,
+   როცა work tree დასახელებულია git dir-ის გარეშე. **ყალბი git ყველაფერს
+   პასუხობს.**
 
 ### წესები, რომლებიც არ იცვლება
 
 - **ნუ გააფართოვებ scope-ს ჩუმად.** სხვისი task-ის ფაილში დეფექტი → გაასწორე შენი,
-  **დაასახელე** residual კოდის docstring-ში + ledger-ში. ცალკე `HARDEN-NN:` commit
-  საჭიროებს ჩემს თანხმობას (პრეცედენტი: HARDEN-01…04).
+  **დაასახელე** residual docstring-ში + ledger-ში. ცალკე `HARDEN-NN:` commit
+  ჩემს თანხმობას საჭიროებს (პრეცედენტი: HARDEN-01…05).
 - **ნურც შეავიწროვებ:** ცნობილი credential ფორმატის გაუშიფრავად დატოვება უარესია,
   ვიდრე დოკუმენტირებული საზღვრის გადაჭიმვა.
-- **თითო task = თითო commit** `Tx.yy: …` სტილით. Rollback-ის ერთეულია. საერთო
-  ფაილები (`pyproject.toml`, `ci.yml`, `tcb-loc-manifest.txt`) hunk-ებად გაყავი.
+- **თითო task = თითო commit** `Tx.yy: …` სტილით. საერთო ფაილები (`pyproject.toml`,
+  `ci.yml`, `tcb-loc-manifest.txt`) hunk-ებად გაყავი.
 - **Review checkpoint commit-ის ტექსტში მიდის** (RED evidence · floors · critics ·
-  mutations · residuals). ნუ გაჩერდები task-ებს შორის ნებართვის სათხოვნელად —
-  კითხე მხოლოდ მაშინ, თუ ორი წაკითხვა არსებითად სხვა სამუშაოს იძლევა.
-- **Push მხოლოდ ცალკე თხოვნით.** Remote `github.com/null0xxx/kris` **private**-ია.
+  mutations · residuals · receipt-ის მდგომარეობა). **escalated ≠ approved** — ეს
+  პირდაპირ დაწერე.
+- **Push მხოლოდ ცალკე თხოვნით.** Remote **private**-ია.
 - `SPEC.md` და `IMPLEMENTATION_PLAN.md` **გაყინულია** — არასოდეს შეცვალო ტესტის
   გასამწვანებლად. SPEC-ის შეცვლა მხოლოდ: **გაზომილი** კორექცია + ჩემი თანხმობა +
-  revision table (პრეცედენტი: §8.1 HARDEN-03-ის შემდეგ).
+  revision table (პრეცედენტი: §8.1 HARDEN-03-ისა და HARDEN-05-ის შემდეგ).
 - **არასოდეს** განაახლო `.atlas/session_3056019e-…` — დასრულებული, hash-chained
   Gate-3 ledger-ია (`current_state: OUTPUT`, terminal).
+- **TCB-ში `# pragma: no cover` აკრძალულია** (§23.1) და CI-ის scan ახლა
+  `recovery`-საც ფარავს. მიუწვდომელი დაცვითი შტო **წაშალე**, ნუ დაფარავ.
 
-## 5. წვრილმანი, რომელიც დროს გიშველის
+## 6. წვრილმანი, რომელიც დროს გიშველის
 
-- **`/tmp` sandbox-ისთვის აკრძალულია.** §8.1 მას tmpfs-ით ფარავს, ამიტომ
-  `build_argv` უარყოფს `/tmp`-ის ქვეშ მყოფ workspace-ს. pytest-ის `tmp_path`
-  **არ გამოდგება** sandbox-იან ტესტში — გამოიყენე `~/.cache/lsassist/<uuid>/ws`
-  cleanup-ით (იხ. `tests/unit/tools/test_dispatch_execute.py`-ის `workspace` fixture).
-- **`sh -c env` ბავშვის env-ს ვერ ზომავს** — shell თვითონ სვამს `PWD`-ს.
-  გამოიყენე `/bin/cat /proc/self/environ`.
-- **§7.2-ის R4 ყოველ shell-metachar-იან argv-ს CONFIRM_EXACT-ზე აწევს.** integration
-  ტესტებში `|`/`>`/`&` ნიშნავს, რომ **რეალური token უნდა მოჭრა** (იხ.
-  `tests/integration/tools/test_dispatch_sandbox.py`-ის `proceeding`).
-- `tests/contract/`, `tests/integration/`, `tests/e2e/` **უნდა გაუშვას CI-მ.**
-  `tests/unit/scripts/test_coverage_gate.py`-ში `CI_JOBS` **ზუსტი ტოლობითაა**
-  დაპინული — ახალი job მისი განახლების გარეშე წითლდება. იქვეა layer-ების პინი.
-- პროექტის root-ში შეიძლება გაჩნდეს `.atl/` — plugin-ის skill-registry cache.
-  **არაა** პროექტის ნაწილი; root-ის `.gitignore` მას უკვე ფარავს.
+- **`/tmp` sandbox-ისთვის აკრძალულია** (§8.1 tmpfs-ით ფარავს). pytest-ის
+  `tmp_path` **არ გამოდგება** sandbox-იან ტესტში — `~/.cache/lsassist/<uuid>/ws`.
+- **`sh -c env` ბავშვის env-ს ვერ ზომავს.** Arch-ზე `/bin/sh` **bash-ია** და
+  `SHLVL`/`_`-ს თვითონ სვამს. გამოიყენე `/bin/cat /proc/self/environ`.
+- **§6.4 ორჯერ Debian-ს ვარაუდობს:** `/etc/alternatives` (HARDEN-05-მა დახურა) და
+  `pkg.query`-ის `dpkg-query`/`apt-cache` (**ღია residual** — Arch-ზე არ არსებობს,
+  ჩავარდნა ხმამაღალია).
+- `sys.info os_release` **`/usr/lib/os-release`-ს** კითხულობს: §8.1 `/usr`-ს აბამს,
+  `/etc`-ს არა.
+- **`git.read`-ის `path` არჩევითია**, ანუ caller-მა `path_args=["path"]` მაინც უნდა
+  გამოაცხადოს — იგივე ფორმა, რაც T3.03-მა `test.run`-ზე დაასახელა.
+- `tests/unit/scripts/test_coverage_gate.py`-ში `TCB_PACKAGES`, `CI_JOBS` და
+  layer-ები **ზუსტი ტოლობითაა** დაპინული — იატაკის გაფართოება **სამფაილიანი**
+  ცვლილებაა by construction (pyproject `source` + CI `--source=` + CI pragma scan).
+- **TCB LOC 5955 / 6000** — target-იდან 45 ხაზი. შემდეგი TCB პაკეტი გადააჭარბებს;
+  hard stop 8000, ანუ არ იბლოკება, მაგრამ დაასახელე.
+- პროექტის root-ში შეიძლება გაჩნდეს `.atl/` — plugin-ის cache, `.gitignore`-შია.
 
 ---
 
-დაიწყე §1-ის გაზომვით და §3-ის frontier-ის დადასტურებით, მერე გააგრძელე **T3.04**-ით.
+დაიწყე §1-ის გაზომვით, მერე §3 — **T4.04-ის ხელახალი review და ჩაკომიტება**.
+`gentle-ai` სრულფასოვნად, ყოველ candidate-ზე.
