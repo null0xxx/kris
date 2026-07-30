@@ -1,0 +1,64 @@
+{
+  "name": "fs.write",
+  "version": "1.0.0",
+  "purpose": "Write one file inside the workspace atomically, creating it unless intent=overwrite is given.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "content"],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 1000000
+      },
+      "intent": {
+        "type": "string",
+        "enum": ["create", "overwrite"]
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "bytes_written", "created"],
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "bytes_written": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "created": {
+        "type": "boolean"
+      }
+    }
+  },
+  "permission_class": "AUTO_SCOPED_WRITE",
+  "capabilities": {
+    "fs": "write_scoped",
+    "net": "none",
+    "proc": "none"
+  },
+  "timeout_s": 30,
+  "output_limits": {
+    "max_stdout_bytes": 10000,
+    "max_stderr_bytes": 10000,
+    "max_result_chars": 10000
+  },
+  "concurrency": "exclusive",
+  "idempotent": false,
+  "dry_run": false,
+  "rollback": "checkpoint",
+  "redaction": ["paths", "secrets"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_write_tools.py",
+    "tests/integration/tools/test_write_sandbox.py"
+  ]
+}

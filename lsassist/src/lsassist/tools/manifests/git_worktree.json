@@ -1,0 +1,57 @@
+{
+  "name": "git.worktree",
+  "version": "1.0.0",
+  "purpose": "Add one git worktree on a new branch, inside the workspace's reserved .lsassist/worktrees/ directory.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "branch"],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "branch": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["branch", "created"],
+    "properties": {
+      "branch": {
+        "type": "string"
+      },
+      "created": {
+        "type": "boolean"
+      }
+    }
+  },
+  "permission_class": "AUTO_SCOPED_WRITE",
+  "capabilities": {
+    "fs": "write_scoped",
+    "net": "none",
+    "proc": "spawn_argv"
+  },
+  "timeout_s": 60,
+  "output_limits": {
+    "max_stdout_bytes": 20000,
+    "max_stderr_bytes": 20000,
+    "max_result_chars": 20000
+  },
+  "concurrency": "exclusive",
+  "idempotent": false,
+  "dry_run": false,
+  "rollback": "manual_steps",
+  "redaction": ["paths"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_write_tools.py",
+    "tests/integration/tools/test_write_sandbox.py"
+  ]
+}

@@ -750,16 +750,29 @@ def test_manifest_matches_the_6_4_catalog_row(
     assert manifest.output_limits.max_result_chars == result_cap
 
 
-def test_the_batch_is_exactly_the_six_read_only_tools() -> None:
-    """A seventh tool appearing here is a catalog change, not an accident."""
-    assert set(REGISTRY.names) == {
-        "fs.read",
-        "fs.list",
-        "fs.find",
-        "sys.info",
-        "pkg.query",
-        "git.read",
+#: T3.04's batch, by name. Kept as a literal set rather than derived from the
+#: catalog: deriving it would make this file agree with whatever is installed,
+#: which is the one thing it exists not to do.
+READ_ONLY_BATCH = frozenset(
+    {"fs.read", "fs.list", "fs.find", "sys.info", "pkg.query", "git.read"}
+)
+
+
+def test_the_read_batch_is_exactly_the_six_AUTO_READ_tools() -> None:
+    """A seventh READ tool appearing here is a catalog change, not an accident.
+
+    Keyed on ``permission_class`` rather than on the whole catalog, because the
+    catalog legitimately grew when T3.05 added the write batch. Asserting equality
+    against the AUTO_READ set is the STRONGER form of the original check: it still
+    catches a new read tool arriving unnoticed, and it additionally catches one of
+    these six silently losing its class — which the old whole-registry version
+    could not, since a tool reclassified to AUTO_SCOPED_WRITE would have kept its
+    name and passed.
+    """
+    auto_read = {
+        name for name in REGISTRY.names if REGISTRY[name].permission_class.value == "AUTO_READ"
     }
+    assert auto_read == set(READ_ONLY_BATCH)
 
 
 def test_every_input_schema_forbids_additional_properties() -> None:
@@ -771,10 +784,17 @@ def test_every_input_schema_forbids_additional_properties() -> None:
 
 
 def test_no_read_only_tool_can_write_or_reach_the_network() -> None:
-    for name in REGISTRY.names:
+    """Scoped to the read batch by name, since T3.05's tools are `write_scoped`.
+
+    The `net` half stays a property of the WHOLE catalog: SPEC §6.4 gives no V1
+    tool network access at all, so a manifest acquiring it is a finding regardless
+    of which batch it belongs to.
+    """
+    for name in READ_ONLY_BATCH:
         capabilities = REGISTRY[name].capabilities
         assert capabilities.fs.value != "write_scoped", name
-        assert capabilities.net.value == "none", name
+    for name in REGISTRY.names:
+        assert REGISTRY[name].capabilities.net.value == "none", name
 
 
 def test_the_manifest_directory_is_packaged() -> None:

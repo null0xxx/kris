@@ -44,12 +44,16 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
     from lsassist.tools.dispatcher import DispatchEnvironment, NormalizedRequest
 
 __all__ = [
+    "ANCHOR_MISS",
     "CANARY_TRIPPED",
+    "CHECKPOINT_FAILED",
     "DENY_PATH",
     "READ_FAILED",
+    "TARGET_EXISTS",
     "TARGET_REPLACED",
     "TIMED_OUT",
     "WORKSPACE_SCOPE",
+    "WRITE_FAILED",
     "Handler",
     "HandlerContext",
     "HandlerRefused",
@@ -105,6 +109,41 @@ WORKSPACE_SCOPE: Final = "workspace_scope"
 #: a DEADLINE and must check it — a budget nothing consults is a number in a
 #: manifest, not a bound.
 TIMED_OUT: Final = "timeout"
+
+# -- T3.05, the WRITE batch --------------------------------------------------
+#
+# A write needs reasons a read never did, and each of these names a refusal that
+# must leave the workspace exactly as it was. That is the shared property: a
+# write handler either publishes the whole new content or changes nothing, so
+# every kind below is also an assertion about what is NOT on disk afterwards.
+
+#: The bytes could not be published: the temporary file could not be created or
+#: written, ``fsync`` failed (a full disk shows up here), or the atomic publish
+#: itself failed. The target is untouched — that is what makes the tmp+``fsync``
+#: +publish order worth its cost rather than a ritual.
+WRITE_FAILED: Final = "write_failed"
+
+#: §6.4: ``fs.write`` is create-only unless the request carries
+#: ``intent=overwrite``, and an existing path in create-only mode is a REFUSAL.
+#:
+#: Separate from :data:`WRITE_FAILED` because the remedy is different and the
+#: caller can act on it: this one says "the file you did not expect to exist does
+#: exist", which is a fact about the workspace, not about the write.
+TARGET_EXISTS: Final = "target_exists"
+
+#: §6.4: ``fs.patch`` uses "exact-match anchors" with "all-or-nothing (no
+#: partial)". An anchor that matches zero times cannot be applied; one that
+#: matches MORE than once did not say where, and a first-occurrence guess would
+#: edit a place the caller never named while producing a plausible file. Both are
+#: this one kind, because both mean the same thing: the request did not identify
+#: a unique edit, so no edit happens.
+ANCHOR_MISS: Final = "anchor_miss"
+
+#: §14.4's pre-mutation snapshot could not be taken, so the mutation must not
+#: happen. The caller's entire licence to modify a file is that it can undo the
+#: change; without the checkpoint that licence does not exist, and proceeding
+#: would leave it believing in a rollback that was never made.
+CHECKPOINT_FAILED: Final = "checkpoint_failed"
 
 
 class HandlerRefused(Exception):

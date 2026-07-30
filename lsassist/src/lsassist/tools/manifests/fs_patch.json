@@ -1,0 +1,78 @@
+{
+  "name": "fs.patch",
+  "version": "1.0.0",
+  "purpose": "Apply search/replace blocks to one file inside the workspace, all-or-nothing, with exact-match anchors.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "blocks"],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "blocks": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["search", "replace"],
+          "properties": {
+            "search": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100000
+            },
+            "replace": {
+              "type": "string",
+              "maxLength": 100000
+            }
+          }
+        }
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["path", "blocks_applied", "bytes_written"],
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "blocks_applied": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "bytes_written": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "permission_class": "AUTO_SCOPED_WRITE",
+  "capabilities": {
+    "fs": "write_scoped",
+    "net": "none",
+    "proc": "none"
+  },
+  "timeout_s": 30,
+  "output_limits": {
+    "max_stdout_bytes": 10000,
+    "max_stderr_bytes": 10000,
+    "max_result_chars": 10000
+  },
+  "concurrency": "exclusive",
+  "idempotent": false,
+  "dry_run": false,
+  "rollback": "checkpoint",
+  "redaction": ["paths", "secrets"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_write_tools.py",
+    "tests/integration/tools/test_write_sandbox.py"
+  ]
+}
