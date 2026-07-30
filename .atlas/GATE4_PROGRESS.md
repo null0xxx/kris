@@ -1081,3 +1081,44 @@ BEFORE correcting**, then re-review the corrected candidate.
    including another tautology (the `worktree_result` test supplied `feat` on both
    sides) and two tests asserting only the refusal KIND where a neighbouring check
    produced the same kind. Assert the DIAGNOSIS, not the code.
+
+## ✅ T3.05 LANDED — `a9293d4`
+
+Committed after the review's two CRITICALs and six warnings were answered by
+correcting the candidate and re-mutating, not by a bound correction transaction.
+`review-e6407ec4bee344e5` was quarantined while still at `state: reviewing` —
+**the cheap moment**, before `finalize` can trap a lineage in the §0.1 dead end.
+
+Final floors: **3036 passed** · ruff clean · `mypy --strict` clean · §23.1 **100%**
+· dispatcher+result **100%** · **TCB LOC 6020, UNCHANGED** · handlers 93/96/100% ·
+**22 mutants, 22 killed**.
+
+### What the corrections were
+
+1. **`result_of` now reads BOTH streams.** Measured: `git worktree add` writes its
+   confirmation to stderr. Reading stdout alone reported every success as a failure.
+2. **`publish` carries over the replaced file's mode.** A 0755 script patched by
+   this tool came back 0600 and stopped being executable.
+3. **The fsync test asserts line ORDER, not membership.** Its name had claimed
+   ordering while a set discarded it.
+4. **Three boundary tests** for mutants that survived the first campaign: touching
+   patch spans, a worktree path equal to the reserved directory, and
+   `_existing_kind`'s EACCES branch — whose loss makes an unreadable target look
+   ABSENT and skips the mandatory checkpoint.
+
+### 🔁 A residual that has now appeared TWICE
+
+"A safety property proven only in `tests/integration`, which the §23.1 gate does
+not run and which skips silently without git" was T4.04's seventh CRITICAL and is
+T3.05's second. **It has no owner.** A third occurrence should be treated as a
+defect in the gate's shape rather than as another per-task residual: either the
+integration suite gets its own blocking floor, or the properties it alone proves
+get a unit-level counterpart.
+
+### 🧠 The methodological lesson of this task
+
+My mutation harness was invoked with the module argument missing, so six mutants
+reported SURVIVED without ever being applied. The `count != 1` guard did not save
+me because the script died earlier, on the path. **"Unapplied" and "survived" look
+identical in the output** — this ledger already said so, and I still hit it. Assert
+the mutation applied AND assert the harness's arity.

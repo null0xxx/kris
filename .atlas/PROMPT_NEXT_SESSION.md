@@ -3,9 +3,8 @@
 > **How to use.** Open a new session at `/home/null/Desktop/LinuxSec` (the git root,
 > **not** `lsassist/`) and paste everything below the line as a single message.
 >
-> Written 2026-07-30 at commit `a558dbe`, with **T4.04 landed** and **T3.05 green on
-> disk but UNCOMMITTED, carrying two CRITICALs its review found**. Every number below
-> is a **HYPOTHESIS TO FALSIFY** — §1 says why.
+> Written 2026-07-30 at commit `a9293d4`, with **T3.05 LANDED and the working tree
+> clean**. Every number below is a **HYPOTHESIS TO FALSIFY** — §1 says why.
 
 ---
 
@@ -75,7 +74,7 @@ forecast; მხოლოდ validation) — **ოთხივე იდენ�
 cd /home/null/Desktop/LinuxSec && git log --oneline -4 && git status --short
 ```
 
-**მოსალოდნელი HEAD: `9c7c5e6` ან უფრო ახალი `docs:` commit; სამუშაო ხე სუფთა.**
+**მოსალოდნელი HEAD: `a9293d4` ან უფრო ახალი `docs:` commit; სამუშაო ხე სუფთა.**
 
 ```bash
 cd /home/null/Desktop/LinuxSec/lsassist
@@ -105,7 +104,7 @@ $V/python -m coverage run --branch \
   -m pytest tests/unit/tools && $V/python -m coverage report --fail-under=100
 ```
 
-**მოსალოდნელი (გაზომილი 2026-07-30, `9c7c5e6`):** pytest **2958 passed, 0 failed,
+**მოსალოდნელი (გაზომილი 2026-07-30, `a9293d4`):** pytest **3036 passed, 0 failed,
 0 skipped** · ruff clean · `mypy --strict` clean 49 ფაილზე · **TCB LOC 6020 / 6000**
 · §23.1 **100% branch, 0 partial** · dispatcher+result **100%** · pragma ნული.
 
@@ -117,98 +116,66 @@ cp314-ს სამართლიანად უარყოფს. სწო�
 `uv python install 3.12 && /home/null/.local/share/uv/python/cpython-3.12-linux-x86_64-gnu/bin/python3.12 -m venv ~/.local/share/lsassist/venv`
 მერე `pip install --require-hashes -r requirements.lock -r requirements-dev.lock && pip install -e . --no-deps`.
 
-## 2. სად ვართ — გაზომილი, არა ნავარაუდები
+## 2. სად ვართ — გაზომილი
 
-**32 / 70 task აშენებულია = 45.7%** (T3.05 ჩათვლით, რომელიც **დაუკომიტებელია**).
+**33 / 70 task აშენებულია ≈ 47%.**
 
 | Phase | | |
 |---|---|---|
 | 1 | 10/11 | 90.9% |
 | 2 | 13/13 | **100%** |
-| 3 | 6/14 | 42.9% |
+| 3 | 7/14 | 50.0% |
 | 4 | 3/12 | 25.0% |
 | 5 | 0/14 | **0%** |
 | 6 | 0/6 | **0%** |
 
-⚠️ **45.7% task-ია, 0% მუშა პროგრამა.** `lsassist` ჯერ არ ეშვება: Phase 5 (CLI,
-session engine, coding/tutor) ხელუხლებელია და `src/`-ში არაფერი აერთებს არც
+⚠️ **47% task-ია, 0% მუშა პროგრამა.** `lsassist` ჯერ არ ეშვება: Phase 5 (CLI,
+session engine, coding/tutor) ხელუხლებელია და `src/`-ში **არაფერი აერთებს** არც
 T3.04/T3.05-ის handler-ებს, არც T4.04-ის store-ს. შეკრების წერტილი **T5.12**.
+Task-ების პროცენტი ≠ პროგრესი მუშა ხელსაწყოსკენ.
 
-**როგორ გაზომო თავიდან** (commit-ის სახელებით grep **აკლებს** — 24/70 გამოდის):
-`IMPLEMENTATION_PLAN.md`-ის თითო `### Tx.yy` ბლოკიდან აიღე `**Files:**` ხაზი,
-გახსენი brace-ნოტაცია (`{contracts,kernel,…}/__init__.py`), და თითო გზა შეამოწმე
-**სამივე** ფესვზე: repo root, `lsassist/`, და წინა `lsassist/`-ის მოჭრით. `.`-ით
-დაწყებულ გზებს `lstrip("./")` წერტილს აჭამს — ნუ გამოიყენებ.
+**როგორ გაზომო თავიდან** (commit-ის სახელებით grep **აკლებს**): თითო `### Tx.yy`
+ბლოკიდან აიღე `**Files:**`, გახსენი brace-ნოტაცია
+(`{contracts,kernel,…}/__init__.py`), და თითო გზა შეამოწმე **სამივე** ფესვზე:
+repo root, `lsassist/`, და წინა `lsassist/`-ის მოჭრით. `lstrip("./")` წერტილს
+აჭამს `.github/…`-ს — ნუ გამოიყენებ.
 
-## 3. 🚨 ორი გადაწყვეტილება, რომელიც შენ გელოდება
+## 3. 🚨 ერთი გადაწყვეტილება, რომელიც შენ გელოდება
 
-### 3.1 FEATURE FREEZE — TCB LOC 6020 / 6000
+### FEATURE FREEZE — TCB LOC 6020 / 6000
 
 SPEC.md:132 (§2.3): „TCB ≤ 6,000 LOC **Gate 4 MVP-ზე**; hard stop 8,000. ზღვარზე
 გადასვლა = **feature freeze**, არა budget-ის მოშვება."
 
-✅ **T3.05-მა ნული TCB ხაზი დაამატა** — LOC counter 6020-ია მის წინაც და მის
-შემდეგაც. მიზეზი: checkpoint store closure-ით მიეწოდება (`make_writer(store)`),
-ანუ `tools/dispatcher.py`-ს (`tcb`) არ ეხება. **იგივე ხერხი გამოიყენე ყოველ
-handler-ზე.**
+✅ **T3.05-მა ნული TCB ხაზი დაამატა** — counter 6020-ია მის წინაც და შემდეგაც.
+ხერხი: checkpoint store **closure**-ით მიეწოდება (`make_writer(store)`), ანუ
+`tools/dispatcher.py`-ს (`tcb`) არ ეხება. **გაიმეორე ყოველ handler-ზე.**
 
-⚠️ **NEGATIVE RESULT — reviewer-ის შემოთავაზებული LOC-ის დაბრუნება გაზომილია და
-არ ღირს. ნუ გააკეთებ.** `_ensure_dir_chain`-ის გაზიარება `config/xdg.py`-სთან
-იძლევა **~21 ხაზს** (არა 55: `loc-count` მხოლოდ კოდს ითვლის), ანუ 6020 → 5999 —
-ერთი ხაზი ზღვარს ქვემოთ. და ფასი: `config` **90% branch**-ზეა და §23.1-ის
-ხუთეულში **არ არის**, ანუ primitive გადავიდოდა 100%-იანი იატაკიდან იატაკის
-გარეშე პაკეტში. ეს `tcb-loc-manifest.txt`-ის **საკუთარი residual 3-ია**. სწორი
-გზა: ცალკე task, რომელიც ჯერ `config`-ს იატაკს ქვეშ შეიყვანს — ჩემი თანხმობით.
+⚠️ **NEGATIVE RESULT — reviewer-ის LOC refactor გაზომილია და არ ღირს. ნუ
+გააკეთებ.** `_ensure_dir_chain`-ის გაზიარება `config/xdg.py`-სთან იძლევა **~21
+ხაზს** (არა 55 — `loc-count` მხოლოდ კოდს ითვლის), ანუ 5999: ერთი ხაზი ზღვარს
+ქვემოთ. ფასი: `config` **90% branch**-ზეა და §23.1-ის ხუთეულში **არ არის** —
+primitive გადავიდოდა 100%-იანი იატაკიდან იატაკის გარეშე პაკეტში. ეს
+`tcb-loc-manifest.txt`-ის **საკუთარი residual 3-ია**. სწორი გზა: ცალკე task,
+რომელიც **ჯერ** `config`-ს იატაკს ქვეშ შეიყვანს — ჩემი თანხმობით.
 
-### 3.2 T4.04 `explicit-maintainer-action`-ით დაკომიტდა
+## 4. შემდეგი საქმე
 
-Receipt `allow` არ არის — მიზეზი §0.1-ის facade-ის ჩიხია, არა შეუმოწმებელი
-candidate. სრული ჩანაწერი `9c7c5e6`-ის commit-ში და `GATE4_PROGRESS.md`-ში.
+**T3.05 დაფარულია** (`a9293d4`). Frontier თვითონ გამოთვალე `Depends on` გრაფის
+ტრანზიტული ჩაკეტვით — ⚠️ ამ ledger-ის frontier-ის ხაზი ერთხელ უკვე ტყუოდა,
+რადგან მხოლოდ პირველი დამოკიდებულება წავიკითხე.
 
-## 4. პირველი საქმე: T3.05-ის ორი CRITICAL
+გახსნილი კანდიდატები: **T4.03** (audit reader), **T4.05** (rollback flow —
+T4.04-ს ეყრდნობა და მისი პირდაპირი გაგრძელებაა), **T3.09/T3.11** (provider
+adapters). **T3.06** ითხოვს T3.05-ს **და** T4.07-ს.
 
-**T3.05 დისკზეა, მწვანე, დაუკომიტებელი.** Floors: 3031 passed · ruff clean ·
-`mypy --strict` clean · §23.1 100% · TCB LOC უცვლელი · 16/16 მუტანტი.
-იზოლირებულმა 4R-მა **ორი CRITICAL** იპოვა — ორივე ნამდვილი.
-
-### 🔴 1. `git worktree add` **stderr**-ში წერს, არა stdout-ში — გაზომილია
-
-`git_worktree.result_of()` `observation.stdout`-ს კითხულობს
-`Preparing worktree (new branch 'x')`-ისთვის. git 2.55.0-ზე გაზომილი: ეს ხაზი
-**stderr-შია**, stdout-ში მხოლოდ `HEAD is now at <sha> <msg>`. ანუ **ყოველი
-წარმატებული worktree დაფიქსირდებოდა `created: false`, `branch: ""`**.
-
-ვერც ერთმა ტესტმა ვერ დაიჭირა: unit-ს ხელით მოგონილი stdout ჰქონდა,
-integration-მა რეალური git გაუშვა, მაგრამ `result_of` არ გამოუძახებია.
-
-### 🔴 2. checkpoint-ის უსაფრთხოების მტკიცება blocking gate-ს გარეთაა
-
-pre-write checkpoint-ის აღდგენადობა და „workspace-ის `.git` ხელუხლებელია"
-მხოლოდ `@requires_git` ტესტებით მტკიცდება `tests/integration/`-ში, რომელსაც
-§23.1-ის gate **არ უშვებს** და რომელიც git-ის გარეშე ჩუმად გამოტოვდება.
-**იგივე კლასი, რაც T4.04-ის მეშვიდე CRITICAL.**
-
-### 🟡 WARNING-ები, რომლებიც commit-მდე უნდა გასწორდეს
-
-- `publish()` tmp-ს ყოველთვის **0600**-ით ქმნის → overwrite/patch ჩუმად აშორებს
-  target-ის თავდაპირველ რეჟიმს (0755 → 0600).
-- **overwrite-ს publish-ის დროს backstop არ აქვს**: create-only-ს ორი დაცვა აქვს
-  (`lstat` + `os.link`-ის ატომური EEXIST), overwrite-ს კი მხოლოდ `lstat`, და
-  `os.rename` უპირობოდ ანაცვლებს.
-- `test_the_publish_fsyncs_before_it_renames` **რიგს არ ამოწმებს, მხოლოდ
-  არსებობას** — სახელი ტყუის.
-- დაუტესტავი საზღვრები: `later[0] < earlier[1]` (მიმდებარე span-ები),
-  `len(segments) <= len(reserved)` (გზა თავად reserved დირექტორიაზე),
-  `_existing_kind`-ის `except OSError` შტო.
+⚠️ **T3.05-ის ორი residual, რომლებიც შემდეგმა task-მა უნდა იცოდეს:**
+- checkpoint-ის აღდგენადობა და „workspace-ის `.git` ხელუხლებელია" მხოლოდ
+  `tests/integration`-ში მტკიცდება, რომელსაც §23.1-ის gate **არ უშვებს**. ეს
+  **მეორედ** ჩნდება (T4.04-ის მეშვიდე CRITICAL იყო პირველი) და **მფლობელი არ
+  ჰყავს**. თუ სამჯერ გამეორდა — ეს აღარ არის residual, არამედ gate-ის ხარვეზი.
 - `fs_patch` იმპორტს უკეთებს `fs_write`-ის პრივატულ `_checkpoint`-სა და
   არა-ექსპორტირებულ `publish`-ს; პაკეტის კონვენცია `_common.py`-ია.
-
-### 📌 Lineage-ის მდგომარეობა
-
-`review-e6407ec4bee344e5` არის `state: reviewing` — შედეგები **არ დაფიქსირებულა**,
-`finalize` **არ გაშვებულა**. §0.1-ის ჩიხი მხოლოდ `correction_required`-ს იჭერს,
-ანუ ეს ჯერ სუფთად გადაიდება გვერდზე. **გვერდზე გადადე გასწორებამდე**, მერე
-გაასწორე, მერე ხელახალი review.
 
 ## 5. როგორ ვმუშაობთ
 
