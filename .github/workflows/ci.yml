@@ -106,7 +106,7 @@
         },
         {
           "name": "no coverage pragma in the TCB (SPEC §23.1, T2.13 review checkpoint)",
-          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py src/lsassist/tools/result.py; do\n  test -e \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/tools/dispatcher.py src/lsassist/tools/result.py; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
+          "run": "set -eu\n# grep exits 2 (not 1) on a missing path, so a bare `if grep ...` would\n# pass after a package rename. Check the directories exist first.\nfor d in src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/recovery src/lsassist/tools/dispatcher.py src/lsassist/tools/result.py; do\n  test -e \"$d\" || { echo \"ERROR: TCB package $d is missing - the pragma grep cannot fail open\" >&2; exit 1; }\ndone\nif grep -rniE --include='*.py' 'pragma:?[[:space:]]*no[[:space:]]*(cover|branch)' src/lsassist/kernel src/lsassist/policy src/lsassist/sandbox src/lsassist/audit src/lsassist/recovery src/lsassist/tools/dispatcher.py src/lsassist/tools/result.py; then\n  echo 'ERROR: coverage pragmas are forbidden in TCB packages (SPEC 23.1, ADR-011)' >&2\n  exit 1\nfi"
         },
         {
           "uses": "actions/setup-python@v5",
@@ -127,7 +127,7 @@
         },
         {
           "name": "branch coverage measurement (ADR-011: coverage, not pytest-cov)",
-          "run": ".venv/bin/python -m coverage run --branch --source=src/lsassist/kernel,src/lsassist/policy,src/lsassist/sandbox,src/lsassist/audit -m pytest tests/unit tests/property -q"
+          "run": ".venv/bin/python -m coverage run --branch --source=src/lsassist/kernel,src/lsassist/policy,src/lsassist/sandbox,src/lsassist/audit,src/lsassist/recovery -m pytest tests/unit tests/property -q"
         },
         {
           "name": "100% branch floor - blocking (SPEC §23.1; fail_under lives in pyproject.toml)",

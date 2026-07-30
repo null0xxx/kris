@@ -84,7 +84,9 @@ DEV_LOCK = REPO_ROOT / "requirements-dev.lock"
 #: SPEC §23.1's floor. ``audit`` joined at T4.01, when the package stopped being
 #: an empty scaffold and became the single redactor engine (I8) — the most
 #: security-sensitive code in the tree, and the last place a coverage hole
-#: should exist. ``recovery`` joins the same way at T4.04.
+#: should exist. ``recovery`` JOINED at T4.04: a checkpoint store is what a
+#: rollback trusts when the workspace has already been mutated, so a hole in
+#: it is only discovered at the worst possible moment.
 #:
 #: This tuple is asserted for EXACT equality against ``[tool.coverage.run]
 #: source`` and against CI's ``--source=``, so widening the floor is a
@@ -94,6 +96,7 @@ TCB_PACKAGES = (
     "src/lsassist/policy",
     "src/lsassist/sandbox",
     "src/lsassist/audit",
+    "src/lsassist/recovery",
 )
 
 #: What the CI pragma step must SCAN. Wider than TCB_PACKAGES by exactly the two

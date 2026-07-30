@@ -86,7 +86,9 @@ strict = true
 [tool.coverage.run]
 branch = true
 # Scope = SPEC §23.1's TCB packages. `audit` joined at T4.01 (the single §14.3
-# redactor engine, I8); `recovery` joins at T4.04. `source` (not `include`) is
+# redactor engine, I8); `recovery` JOINED at T4.04 — a rollback trusts the
+# checkpoint store when the workspace has already been mutated, so a hole
+# there surfaces only at the worst possible moment. `source` (not `include`) is
 # deliberate: `source` drags never-imported modules into the report at 0%, so
 # dead untested code turns the gate red instead of vanishing from it.
 source = [
@@ -94,6 +96,7 @@ source = [
     "src/lsassist/policy",
     "src/lsassist/sandbox",
     "src/lsassist/audit",
+    "src/lsassist/recovery",
 ]
 # No `omit`: every omit pattern is a hole in the floor.
 
