@@ -964,3 +964,120 @@ shares the primitive. Order matters; the other order weakens the gate.
 individual handlers**". T3.05 therefore adds **zero TCB lines**. ⚠️ If it needs to
 touch `tools/dispatcher.py` or `tools/result.py`, those ARE `tcb` and DO count —
 keep such lines minimal and name them in the commit.
+
+---
+
+## 📊 Measured completion — 32 / 70 = 45.7%, 2026-07-30
+
+**Measured by ARTIFACT EXISTENCE, not by commit-message archaeology.** A `Tx.yy:`
+grep over `git log` UNDERCOUNTS badly (24/70) because many tasks landed under other
+message shapes. The reproducible method:
+
+1. Split `IMPLEMENTATION_PLAN.md` on `^### (T\d+\.\d+)` and take each block's
+   `**Files:**` line.
+2. Expand brace notation — the plan writes `src/lsassist/{contracts,kernel,…}/__init__.py`.
+3. Test each path against the repo root, against `lsassist/`, AND with a leading
+   `lsassist/` stripped. The plan uses all three spellings.
+4. Do **not** `lstrip("./")` — it eats the dot off `.github/workflows/ci.yml`.
+
+| Phase | Built | | |
+|---|---|---|---|
+| 1 | 10/11 | `██████████████████████░░` | 90.9% |
+| 2 | 13/13 | `████████████████████████` | **100%** |
+| 3 | 6/14 | `██████████░░░░░░░░░░░░░░` | 42.9% |
+| 4 | 3/12 | `██████░░░░░░░░░░░░░░░░░░` | 25.0% |
+| 5 | 0/14 | `░░░░░░░░░░░░░░░░░░░░░░░░` | **0%** |
+| 6 | 0/6 | `░░░░░░░░░░░░░░░░░░░░░░░░` | **0%** |
+
+31 tasks not started. Partial: T4.07 1/5, T4.10 1/7, T5.01 2/8, T5.05 1/8,
+T5.08 1/7, T6.06 1/2.
+
+⚠️ **45.7% of tasks, 0% of a usable program.** `lsassist` still does not run. Phase
+5 — CLI, session engine, coding and tutor modes — is untouched, and nothing in
+`src/` wires the T3.04/T3.05 handlers or the T4.04 store. The assembly point is
+**T5.12**. Task percentage is not progress toward a working tool, and this ledger
+should never imply that it is.
+
+## 🚧 T3.05 — GREEN on disk, UNCOMMITTED, review found TWO CRITICALs
+
+Built: three §6.4 manifests, three handlers, four new reason codes
+(`WRITE_FAILED`, `TARGET_EXISTS`, `ANCHOR_MISS`, `CHECKPOINT_FAILED`), two test
+suites, plus a scoped rewrite of two T3.04 assertions that were true only while the
+catalog held six read-only tools.
+
+Floors: **3031 passed** · ruff clean · `mypy --strict` clean on the gated set ·
+§23.1 gate **100%** · dispatcher+result **100%** · **TCB LOC 6020, UNCHANGED** ·
+new handlers 93/96/100% · **16 mutants, 16 killed**.
+
+### ✅ The design that kept the freeze intact
+
+The checkpoint store is injected by **CLOSURE** (`make_writer(store)`), not by a new
+`HandlerContext` field. `Handler = Callable[[HandlerContext], Mapping[str, Any]]`
+already accepts exactly that, so `tools/dispatcher.py` — a `tcb` unit — is
+untouched and **T3.05 added zero TCB lines** while §2.3's feature freeze is live.
+The LOC counter reading 6020 before and after is the proof.
+
+### 🔴 CRITICAL 1 — MEASURED: `git worktree add` reports on STDERR
+
+`git_worktree.result_of()` parses `observation.stdout` for
+`Preparing worktree (new branch 'x')`. Measured on git 2.55.0: that line goes to
+**stderr**; stdout carries only `HEAD is now at <sha> <msg>`. So **every successful
+worktree would be reported `created: false`, `branch: ""`**.
+
+Neither test caught it: the unit test fed a hand-authored stdout stub that invented
+the line, and the integration test ran real git but never called `result_of` and
+never inspected stdout. **A double more cooperative than reality**, which is the
+exact pattern this ledger has now recorded three times.
+
+### 🔴 CRITICAL 2 — the checkpoint's safety proof is outside the blocking gate
+
+Pre-write checkpoint restorability, and "the workspace's own `.git` is untouched",
+are proven ONLY by `@requires_git` tests in `tests/integration/`. The §23.1 gate
+runs `tests/unit tests/property` and nothing else, and those tests skip silently on
+a host without git. **Same defect class as T4.04's CRITICAL 7**, one task later.
+
+### 🟡 WARNINGs worth fixing before the commit
+
+- `publish()` always creates the temp at **0600**, so an overwrite or a patch
+  silently strips the target's original mode (0755 → 0600), and the result payload
+  says nothing about it.
+- **The overwrite path has no publish-time backstop.** Create-only has two
+  defences (`lstat` kind check, then `os.link`'s atomic EEXIST); overwrite has only
+  the `lstat`, and `os.rename` then clobbers unconditionally — so a file created in
+  that window is destroyed with no checkpoint ever taken of it.
+- `test_the_publish_fsyncs_before_it_renames` asserts **presence, not order**. The
+  name is a lie, and an implementation that fsynced AFTER renaming would pass. §6.4
+  and the plan's human-review checkpoint both name the ORDER specifically.
+- Untested boundaries, each with a surviving mutant: the overlap check
+  `later[0] < earlier[1]` (touching-but-not-overlapping spans), the worktree
+  containment `len(segments) <= len(reserved)` (a path equal to the reserved
+  directory itself), and `_existing_kind`'s `except OSError` branch — merging it
+  into the `FileNotFoundError` branch would skip the mandatory checkpoint.
+- `fs_patch` imports fs_write's underscore-private `_checkpoint` and its unexported
+  `publish`; this package's own convention is `_common.py` with a public `__all__`.
+- `fs_write`'s "THE ORDER IS THE DESIGN" list omits the create-only gate — the one
+  invariant ("a refusal costs no retention slot") that is subtle and easy to undo.
+
+### 📌 Lineage state, and why it matters
+
+`review-e6407ec4bee344e5` is at `state: reviewing`: results NOT captured,
+`finalize` NOT run. The §0.1 dead end only traps a lineage that has already reached
+`correction_required`, so this one can still be quarantined cleanly. **Quarantine it
+BEFORE correcting**, then re-review the corrected candidate.
+
+### 🧭 What T3.05 taught that outlives it
+
+1. **RED is a draft, and grounding corrects it.** Three of my RED assertions were
+   wrong and each would have driven a worse implementation: the worktree argv
+   expected `"git"` where the codebase pins `/usr/bin/git` and passes `-C`;
+   `dispatch()` already owns a `create_if_missing` seam for exactly this tool; and
+   a symlink named in a request is CANONICALIZED away before any handler sees it,
+   so the real threat is a link swapped in after approval.
+2. **Policy is the first barrier, the handler is the backstop.** An
+   out-of-workspace write is escalated to `CONFIRM_EXACT` by rule R2, so the
+   handler's `path_scope` check can only be reached by constructing the request the
+   pipeline would have stopped.
+3. **Mutation found six weaknesses the lenses would have had to find later** —
+   including another tautology (the `worktree_result` test supplied `feat` on both
+   sides) and two tests asserting only the refusal KIND where a neighbouring check
+   produced the same kind. Assert the DIAGNOSIS, not the code.
