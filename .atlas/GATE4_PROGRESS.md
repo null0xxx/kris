@@ -920,3 +920,47 @@ moves it onto the in-process path. **That is a decision, not a detail.**
 
 ⚠️ Do not read only the first dependency. This ledger's frontier line was wrong
 once already.
+
+---
+
+## 📐 NEGATIVE RESULT — the reviewer's LOC saving was measured and REJECTED
+
+Recorded because a wrong number was already written into a handoff prompt, and
+because the reasoning generalises to every future "just share the helper" idea in
+this repo.
+
+**The suggestion** (R2, T4.04 round 3): `recovery/checkpoints.py`'s
+`_ensure_dir_chain` re-implements `config/xdg.py`'s `_ensure_dir`; share a
+path-parameterised primitive and earn back "roughly 55 TCB lines".
+
+**Measured, and both halves of the case collapse:**
+
+1. **The saving is ~21 lines, not 55.** `_ensure_dir_chain` is 59 **physical**
+   lines but only **~26 code** lines, and `scripts/loc-count` counts code only —
+   it reports "+3690 docstring lines not counted" for a reason. A wrapper
+   delegating to the shared primitive costs ~5. So 6020 → **5999**: one line
+   under the target, no headroom, and the next TCB line puts it back over.
+2. **It would move a fail-closed security primitive OUT from under the §23.1
+   100 % branch floor.** `config` is `tcb-partial` in `tcb-loc-manifest.txt` so
+   its lines ARE counted, but it is **not** in `TCB_PACKAGES`
+   (kernel, policy, sandbox, audit, recovery) and measures **90 % branch today**
+   — 39 uncovered statements and 14 partial branches across four files. `recovery`
+   is at 100 %.
+
+That second point is **residual 3 of `tcb-loc-manifest.txt`'s own known-residuals
+list** — "moving TCB logic into a package … that the TCB then imports … only
+review defends the proxy" — in the direction that weakens a gate. Trading a
+certified branch floor for 21 lines of a proxy metric is the wrong trade, and
+taking it would be metric-gaming with extra steps.
+
+**The honest route, if the LOC target is to be met:** a separate consented task
+that FIRST brings `config` under §23.1's floor (a three-file gate change plus the
+exact-equality `TCB_PACKAGES` tuple, and the tests to reach 100 %), and only THEN
+shares the primitive. Order matters; the other order weakens the gate.
+
+**Consequence for the freeze:** it does not block T3.05. Every T3.05 file is
+`tools/handlers/`, `tools/manifests/` or `tests/`, all of which are
+`non-tcb src/lsassist/tools` per §2.3's "tools/ dispatcher core **without
+individual handlers**". T3.05 therefore adds **zero TCB lines**. ⚠️ If it needs to
+touch `tools/dispatcher.py` or `tools/result.py`, those ARE `tcb` and DO count —
+keep such lines minimal and name them in the commit.
