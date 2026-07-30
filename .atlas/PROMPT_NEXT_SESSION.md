@@ -3,8 +3,9 @@
 > **How to use.** Open a new session at `/home/null/Desktop/LinuxSec` (the git root,
 > **not** `lsassist/`) and paste everything below the line as a single message.
 >
-> Written 2026-07-30 at commit `9c7c5e6`, with **T4.04 LANDED and the working tree
-> clean**. Every number below is a **HYPOTHESIS TO FALSIFY** — §1 says why.
+> Written 2026-07-30 at commit `a558dbe`, with **T4.04 landed** and **T3.05 green on
+> disk but UNCOMMITTED, carrying two CRITICALs its review found**. Every number below
+> is a **HYPOTHESIS TO FALSIFY** — §1 says why.
 
 ---
 
@@ -116,81 +117,98 @@ cp314-ს სამართლიანად უარყოფს. სწო�
 `uv python install 3.12 && /home/null/.local/share/uv/python/cpython-3.12-linux-x86_64-gnu/bin/python3.12 -m venv ~/.local/share/lsassist/venv`
 მერე `pip install --require-hashes -r requirements.lock -r requirements-dev.lock && pip install -e . --no-deps`.
 
-## 2. სად ვართ
+## 2. სად ვართ — გაზომილი, არა ნავარაუდები
 
-- **33 / 70 task.** Phase 1 ✅ (11/11) · Phase 2 ✅ (13/13) · Phase 3: 5/14 ·
-  Phase 4: 3/12 · Phase 5: 0/14 · Phase 6: 0/6
-- აშენებული: `contracts` `config` `policy` `sandbox` `kernel` `audit`, `tools`
-  (registry + dispatcher + result + handlers), `providers` (base), **`recovery`**
-- ცარიელი scaffold: `memory` `skills` `tutor` `coding` `cli`
-- **`lsassist` ჯერ არ ეშვება.** T3.04-ის handler-ები და T4.04-ის store არსებობს,
-  მაგრამ production-ში მათ **არავინ აერთებს**. შეკრების წერტილი **T5.12**.
-- `main` `origin/main`-ზე (`eeae643`) **9 commit-ით წინაა** — push მხოლოდ ცალკე თხოვნით.
+**32 / 70 task აშენებულია = 45.7%** (T3.05 ჩათვლით, რომელიც **დაუკომიტებელია**).
+
+| Phase | | |
+|---|---|---|
+| 1 | 10/11 | 90.9% |
+| 2 | 13/13 | **100%** |
+| 3 | 6/14 | 42.9% |
+| 4 | 3/12 | 25.0% |
+| 5 | 0/14 | **0%** |
+| 6 | 0/6 | **0%** |
+
+⚠️ **45.7% task-ია, 0% მუშა პროგრამა.** `lsassist` ჯერ არ ეშვება: Phase 5 (CLI,
+session engine, coding/tutor) ხელუხლებელია და `src/`-ში არაფერი აერთებს არც
+T3.04/T3.05-ის handler-ებს, არც T4.04-ის store-ს. შეკრების წერტილი **T5.12**.
+
+**როგორ გაზომო თავიდან** (commit-ის სახელებით grep **აკლებს** — 24/70 გამოდის):
+`IMPLEMENTATION_PLAN.md`-ის თითო `### Tx.yy` ბლოკიდან აიღე `**Files:**` ხაზი,
+გახსენი brace-ნოტაცია (`{contracts,kernel,…}/__init__.py`), და თითო გზა შეამოწმე
+**სამივე** ფესვზე: repo root, `lsassist/`, და წინა `lsassist/`-ის მოჭრით. `.`-ით
+დაწყებულ გზებს `lstrip("./")` წერტილს აჭამს — ნუ გამოიყენებ.
 
 ## 3. 🚨 ორი გადაწყვეტილება, რომელიც შენ გელოდება
 
-### 3.1 FEATURE FREEZE — TCB LOC 6020 / 6000, და რატომ არ ბლოკავს T3.05-ს
+### 3.1 FEATURE FREEZE — TCB LOC 6020 / 6000
 
 SPEC.md:132 (§2.3): „TCB ≤ 6,000 LOC **Gate 4 MVP-ზე**; hard stop 8,000. ზღვარზე
-გადასვლა = **feature freeze**, არა budget-ის მოშვება." **მრიცხველი განზრახ არ
-გადაფორმატდა** — ხაზების შეკუმშვა იმავე წესის დარღვევაა უკუღმა.
+გადასვლა = **feature freeze**, არა budget-ის მოშვება."
 
-✅ **T3.05 არც ერთ TCB ხაზს არ ამატებს, ანუ freeze-ს არ ეწინააღმდეგება.** მისი
-ყველა ფაილი `tools/handlers/`, `tools/manifests/` და `tests/`-ია, რომლებიც
-`scripts/tcb-loc-manifest.txt`-ში **`non-tcb src/lsassist/tools`**-ია (§2.3-ის
-„tools/ dispatcher core **without individual handlers**"). ⚠️ **მაგრამ თუ T3.05
-შეეხება `tools/dispatcher.py`-ს ან `tools/result.py`-ს — ისინი `tcb`-ია და
-ითვლება.** ის ხაზები მინიმალური უნდა იყოს და commit-ში დასახელებული.
+✅ **T3.05-მა ნული TCB ხაზი დაამატა** — LOC counter 6020-ია მის წინაც და მის
+შემდეგაც. მიზეზი: checkpoint store closure-ით მიეწოდება (`make_writer(store)`),
+ანუ `tools/dispatcher.py`-ს (`tcb`) არ ეხება. **იგივე ხერხი გამოიყენე ყოველ
+handler-ზე.**
 
 ⚠️ **NEGATIVE RESULT — reviewer-ის შემოთავაზებული LOC-ის დაბრუნება გაზომილია და
-არ ღირს. ნუ გააკეთებ.** შემოთავაზება იყო: `recovery/checkpoints.py`-ის
-`_ensure_dir_chain` იმეორებს `config/xdg.py`-ის `_ensure_dir`-ს, გააზიარე.
-გაზომვა:
-
-- `_ensure_dir_chain` არის **59 ფიზიკური, ~26 code ხაზი**. `loc-count` **მხოლოდ
-  კოდს ითვლის** (docstring-ები ცალკე). wrapper ~5-ს ხარჯავს → **წუთი ~21 ხაზი**,
-  ანუ 6020 → **5999**. ერთი ხაზი ზღვარს ქვემოთ — არანაირი მარაგი.
-- `config` **90% branch-ზეა** (39 statement, 14 partial ოთხ ფაილში), და
-  **§23.1-ის ხუთეულში არ არის** (`TCB_PACKAGES` = kernel, policy, sandbox, audit,
-  recovery). ანუ primitive გადავიდოდა 100%-იანი იატაკიდან **იატაკის გარეშე**
-  პაკეტში.
-- ეს **ზუსტად residual 3-ია `tcb-loc-manifest.txt`-ის საკუთარი სიიდან** — „TCB
-  ლოგიკის გადატანა პაკეტში, რომელსაც TCB მერე იმპორტს უკეთებს… მხოლოდ review
-  იცავს ამ proxy-ს".
-
-**ნამდვილი გზა, თუ ამას მოგინდება:** ცალკე task, რომელიც `config`-ს §23.1-ის
-იატაკს ქვეშ შეიყვანს (სამფაილიანი gate ცვლილება + `TCB_PACKAGES`-ის ზუსტი
-ტოლობა), **მერე** გააზიარებს primitive-ს. თანმიმდევრობა მნიშვნელოვანია: სხვა
-რიგით gate სუსტდება. ჩემს თანხმობას საჭიროებს.
+არ ღირს. ნუ გააკეთებ.** `_ensure_dir_chain`-ის გაზიარება `config/xdg.py`-სთან
+იძლევა **~21 ხაზს** (არა 55: `loc-count` მხოლოდ კოდს ითვლის), ანუ 6020 → 5999 —
+ერთი ხაზი ზღვარს ქვემოთ. და ფასი: `config` **90% branch**-ზეა და §23.1-ის
+ხუთეულში **არ არის**, ანუ primitive გადავიდოდა 100%-იანი იატაკიდან იატაკის
+გარეშე პაკეტში. ეს `tcb-loc-manifest.txt`-ის **საკუთარი residual 3-ია**. სწორი
+გზა: ცალკე task, რომელიც ჯერ `config`-ს იატაკს ქვეშ შეიყვანს — ჩემი თანხმობით.
 
 ### 3.2 T4.04 `explicit-maintainer-action`-ით დაკომიტდა
 
-Receipt **არ არის approved** — მიზეზი §0.1-ის facade-ის ჩიხია, არა შეუმოწმებელი
-candidate. სრული ჩანაწერი `9c7c5e6`-ის commit-ის ტექსტშია და
-`.atlas/GATE4_PROGRESS.md`-ის ბოლო სექციაში. თუ გინდა, რომ T4.04-ს ნამდვილი
-`allow` receipt ჰქონდეს, ერთადერთი გზა კიდევ ერთი სრული 4R რაუნდია, რომელიც
-**ნულ blocking finding-ს** დააბრუნებს.
+Receipt `allow` არ არის — მიზეზი §0.1-ის facade-ის ჩიხია, არა შეუმოწმებელი
+candidate. სრული ჩანაწერი `9c7c5e6`-ის commit-ში და `GATE4_PROGRESS.md`-ში.
 
-## 4. შემდეგი task: T3.05
+## 4. პირველი საქმე: T3.05-ის ორი CRITICAL
 
-**T3.05 გახსნილია** (`Depends on: T3.04, T4.04` — ორივე დაფარულია): `fs.write`,
-`fs.patch`, `git.worktree`.
+**T3.05 დისკზეა, მწვანე, დაუკომიტებელი.** Floors: 3031 passed · ruff clean ·
+`mypy --strict` clean · §23.1 100% · TCB LOC უცვლელი · 16/16 მუტანტი.
+იზოლირებულმა 4R-მა **ორი CRITICAL** იპოვა — ორივე ნამდვილი.
 
-⚠️ **წინასწარი ხაფანგი, გადამოწმდი:** §6.4 `fs.write`-ს აძლევს
-`write_scoped / none / none` — ეს **პირველი WRITE ინსტრუმენტია, რომელიც
-`proc: none`-იცაა**, ანუ იმავე მარშრუტიზაციის კითხვას შეხვდება, რაც T3.04-ს:
-`dispatcher.run()`-ის in-process შტო ირთვება `proc is NONE **და** handler
-მიწოდებული`-ზე, ანუ write ინსტრუმენტისთვის handler-ის მიწოდება მას in-process
-გზაზე გადაიყვანს. **ეს გადაწყვეტილებაა, არა დეტალი.**
+### 🔴 1. `git worktree add` **stderr**-ში წერს, არა stdout-ში — გაზომილია
 
-⚠️ **`fs.write`-ს checkpoint სჭირდება.** §6.4 ამბობს „checkpoint pre-write" და
-გეგმის GREEN ამბობს „checkpoint pre-write call" — T4.04-ის `CheckpointStore.create`
-უკვე არსებობს, ანუ ეს wiring-ია, არა ახალი მექანიზმი. **Write ინსტრუმენტი
-rollback-ის გარეშე თავისთავად საშიში ნახევარია.**
+`git_worktree.result_of()` `observation.stdout`-ს კითხულობს
+`Preparing worktree (new branch 'x')`-ისთვის. git 2.55.0-ზე გაზომილი: ეს ხაზი
+**stderr-შია**, stdout-ში მხოლოდ `HEAD is now at <sha> <msg>`. ანუ **ყოველი
+წარმატებული worktree დაფიქსირდებოდა `created: false`, `branch: ""`**.
 
-**Frontier თვითონ გამოთვალე** `Depends on` გრაფის ტრანზიტული ჩაკეტვით. ⚠️ ამ
-ledger-ის frontier-ის ხაზი ერთხელ უკვე ტყუოდა — **მხოლოდ პირველ დამოკიდებულებას
-ნუ წაიკითხავ.**
+ვერც ერთმა ტესტმა ვერ დაიჭირა: unit-ს ხელით მოგონილი stdout ჰქონდა,
+integration-მა რეალური git გაუშვა, მაგრამ `result_of` არ გამოუძახებია.
+
+### 🔴 2. checkpoint-ის უსაფრთხოების მტკიცება blocking gate-ს გარეთაა
+
+pre-write checkpoint-ის აღდგენადობა და „workspace-ის `.git` ხელუხლებელია"
+მხოლოდ `@requires_git` ტესტებით მტკიცდება `tests/integration/`-ში, რომელსაც
+§23.1-ის gate **არ უშვებს** და რომელიც git-ის გარეშე ჩუმად გამოტოვდება.
+**იგივე კლასი, რაც T4.04-ის მეშვიდე CRITICAL.**
+
+### 🟡 WARNING-ები, რომლებიც commit-მდე უნდა გასწორდეს
+
+- `publish()` tmp-ს ყოველთვის **0600**-ით ქმნის → overwrite/patch ჩუმად აშორებს
+  target-ის თავდაპირველ რეჟიმს (0755 → 0600).
+- **overwrite-ს publish-ის დროს backstop არ აქვს**: create-only-ს ორი დაცვა აქვს
+  (`lstat` + `os.link`-ის ატომური EEXIST), overwrite-ს კი მხოლოდ `lstat`, და
+  `os.rename` უპირობოდ ანაცვლებს.
+- `test_the_publish_fsyncs_before_it_renames` **რიგს არ ამოწმებს, მხოლოდ
+  არსებობას** — სახელი ტყუის.
+- დაუტესტავი საზღვრები: `later[0] < earlier[1]` (მიმდებარე span-ები),
+  `len(segments) <= len(reserved)` (გზა თავად reserved დირექტორიაზე),
+  `_existing_kind`-ის `except OSError` შტო.
+- `fs_patch` იმპორტს უკეთებს `fs_write`-ის პრივატულ `_checkpoint`-სა და
+  არა-ექსპორტირებულ `publish`-ს; პაკეტის კონვენცია `_common.py`-ია.
+
+### 📌 Lineage-ის მდგომარეობა
+
+`review-e6407ec4bee344e5` არის `state: reviewing` — შედეგები **არ დაფიქსირებულა**,
+`finalize` **არ გაშვებულა**. §0.1-ის ჩიხი მხოლოდ `correction_required`-ს იჭერს,
+ანუ ეს ჯერ სუფთად გადაიდება გვერდზე. **გვერდზე გადადე გასწორებამდე**, მერე
+გაასწორე, მერე ხელახალი review.
 
 ## 5. როგორ ვმუშაობთ
 
