@@ -159,6 +159,7 @@ def environment(tmp_path: Path, workspace: Path) -> DispatchEnvironment:
             audit_store=str(home / ".local/state/lsassist/audit"),
             policy_store=str(home / ".config/lsassist"),
             kernel_secret=str(home / ".local/state/lsassist/kernel.secret"),
+            exec_allowlist=frozenset({"/bin/cat", "/bin/echo", "/bin/sh"}),
         ),
         session_id="s-int",
         token_service=TokenService(b"k" * 32),
@@ -431,9 +432,7 @@ def test_the_journal_records_the_execution_with_every_digest(
     environment: DispatchEnvironment, cache_dir: str, tmp_path: Path
 ) -> None:
     audit_dir = tmp_path / "audit"
-    outcome = execute(
-        environment, cache_dir, make_manifest(), ["/bin/echo", "hi"], audit_dir
-    )
+    outcome = execute(environment, cache_dir, make_manifest(), ["/bin/echo", "hi"], audit_dir)
     journal = next(audit_dir.glob("session-s-int*.jsonl"))
     records = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
 

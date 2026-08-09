@@ -1,5 +1,11 @@
 """SQLite-backed durable memory primitives (SPEC §10)."""
 
+from lsassist.memory.fetch_body import (
+    FETCH_BODY_LIMIT,
+    FetchBody,
+    FetchBodyStore,
+    FetchBodyStoreError,
+)
 from lsassist.memory.migrations import (
     CURRENT_SCHEMA_VERSION,
     MIGRATIONS,
@@ -16,7 +22,11 @@ from lsassist.memory.store import (
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
+    "FETCH_BODY_LIMIT",
     "MIGRATIONS",
+    "FetchBody",
+    "FetchBodyStore",
+    "FetchBodyStoreError",
     "MemoryCorruptedError",
     "MemorySecurityError",
     "MemoryStoreError",

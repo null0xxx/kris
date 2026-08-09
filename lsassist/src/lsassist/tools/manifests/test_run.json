@@ -1,0 +1,43 @@
+{
+  "name": "test.run",
+  "version": "1.0.0",
+  "purpose": "Run the one detected project test runner with a fixed argv head and validated extra argument tokens.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "extra_args": {
+        "type": "array",
+        "maxItems": 128,
+        "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["stdout", "exit_code"],
+    "properties": {
+      "stdout": {"type": "string"},
+      "exit_code": {"type": "integer", "minimum": 0, "maximum": 255}
+    }
+  },
+  "permission_class": "CONFIRM_ONCE",
+  "capabilities": {"fs": "write_scoped", "net": "none", "proc": "spawn_argv"},
+  "timeout_s": 600,
+  "output_limits": {
+    "max_stdout_bytes": 200000,
+    "max_stderr_bytes": 200000,
+    "max_result_chars": 200000
+  },
+  "concurrency": "exclusive",
+  "idempotent": false,
+  "dry_run": false,
+  "rollback": "none",
+  "redaction": ["paths", "secrets"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_exec_net_tools.py",
+    "tests/integration/tools/test_exec_net_sandbox.py"
+  ]
+}

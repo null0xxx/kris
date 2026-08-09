@@ -129,6 +129,7 @@ from lsassist.sandbox.availability import (
     probe as sandbox_probe,
 )
 from lsassist.sandbox.env import DEFAULT_PATH, EnvProjectionError, project_env
+from lsassist.tools import handlers as handler_api
 from lsassist.tools.handlers import Handler, HandlerContext, HandlerRefused
 from lsassist.tools.result import (
     ExecObservation,
@@ -140,7 +141,10 @@ from lsassist.tools.result import (
     sha256_digest,
 )
 
+ARGV_REBOUND: Final = handler_api.ARGV_REBOUND
+
 __all__ = [
+    "ARGV_REBOUND",
     "CLASS_APPROVAL_TERMS",
     "ENV_REBOUND",
     "MALFORMED_TOOL_REQUEST",
@@ -538,9 +542,8 @@ def _child_path(workspace_root: str, *, venv_exists: bool) -> str:
     that venv outrank system tools, which is precisely the case the user most
     needs to see before consenting (recorded obligation 3).
     """
-    if not venv_exists:
-        return DEFAULT_PATH
-    return f"{workspace_root.rstrip('/')}/.venv/bin:{DEFAULT_PATH}"
+    prefix = f"{workspace_root.rstrip('/')}/.venv/bin:" if venv_exists else ""
+    return prefix + DEFAULT_PATH
 
 
 def _canonical_args(
@@ -562,11 +565,10 @@ def _canonical_args(
     for name in path_args:
         if name not in args:
             continue  # an optional path argument, legitimately absent
-        value = args[name]
-        if not isinstance(value, str) or not value:
+        if not isinstance(args[name], str) or not args[name]:
             raise DispatchError(f"path argument {name!r} must be a non-empty string")
         try:
-            canonical = str(canonicalize(value, allow_missing=create_if_missing))
+            canonical = str(canonicalize(args[name], allow_missing=create_if_missing))
         except CanonicalizationError as exc:
             raise DispatchError(f"path argument {name!r} does not canonicalize: {exc}") from exc
         args[name] = canonical
@@ -609,6 +611,14 @@ def _checked_argv(manifest: ToolManifest, args: Mapping[str, Any]) -> tuple[str,
     return tuple(argv)
 
 
+def _executable_identity(path: str) -> list[str | int] | None:
+    try:
+        measured = os.stat(real := os.path.realpath(path))
+        return [real, measured.st_dev, measured.st_ino, measured.st_size, measured.st_ctime_ns]
+    except OSError:
+        return None
+
+
 def _snapshot_targets(canonical_paths: Sequence[str], fs_view: FsView) -> tuple[str, ...]:
     """What §7.5 step 2 can actually measure for each approved path.
 
@@ -622,9 +632,7 @@ def _snapshot_targets(canonical_paths: Sequence[str], fs_view: FsView) -> tuple[
     Order-preserving and de-duplicated: two create-intent siblings share one
     parent, and snapshotting it twice would stat it twice to learn the same fact.
     """
-    targets = [
-        path if fs_view.exists(path) else os.path.dirname(path) for path in canonical_paths
-    ]
+    targets = (path if fs_view.exists(path) else os.path.dirname(path) for path in canonical_paths)
     return tuple(dict.fromkeys(targets))
 
 
@@ -635,6 +643,7 @@ def normalize(
     environment: DispatchEnvironment,
     path_args: Sequence[str] = (),
     create_if_missing: bool = False,
+    execution_argv: Sequence[str] | None = None,
 ) -> NormalizedRequest:
     """§6.3 step 2: canonicalize paths, freeze argv, project env, bind the hash.
 
@@ -650,7 +659,9 @@ def normalize(
     """
     args = validate_args(manifest, request)
 
-    if manifest.capabilities.fs is not FsCapability.NONE and not path_args:
+    pathless_workspace_tool = manifest.name in {"proc.exec", "test.run"}
+    needs_paths = manifest.capabilities.fs is not FsCapability.NONE and not pathless_workspace_tool
+    if needs_paths and not path_args:
         raise DispatchError(
             f"{manifest.name} declares capabilities.fs={manifest.capabilities.fs.value} but no "
             "path_args were declared; an undeclared path argument would skip §7.5 entirely"
@@ -676,7 +687,13 @@ def normalize(
     # Mutates `args` in place, substituting canonical paths — must run BEFORE the
     # action hash is computed over it.
     canonical_paths = _canonical_args(args, path_args, create_if_missing=create_if_missing)
+    if execution_argv is not None and args.setdefault("argv", list(execution_argv)) != list(
+        execution_argv
+    ):
+        raise DispatchError(f"{manifest.name}: execution_argv differs from request argv")
     argv = _checked_argv(manifest, args)
+    if manifest.name == "proc.exec" and argv:
+        args["__executable_identity"] = _executable_identity(argv[0])
 
     try:
         env = project_env(
@@ -786,18 +803,15 @@ def policy_note(
     Built FROM the authoritative class, so it can never contradict it even if
     the rule probe above were wrong.
     """
-    risk = _CLASS_RISK[permission_class]
-    if matched:
-        return f"{permission_class.value} — {risk}; raised by {', '.join(matched)}"
-    return f"{permission_class.value} — {risk}; from the manifest floor (R1)"
+    source = f"raised by {', '.join(matched)}" if matched else "from the manifest floor (R1)"
+    return f"{permission_class.value} — {_CLASS_RISK[permission_class]}; {source}"
 
 
 def rollback_hint(manifest: ToolManifest, permission_class: PermissionClass) -> str:
     """How this action is undone, read from §6.2's ``rollback`` declaration."""
-    hint = _ROLLBACK_HINT[manifest.rollback]
     if permission_class is PermissionClass.DENY_ALWAYS:
         return "not applicable: the action is refused"
-    return hint
+    return _ROLLBACK_HINT[manifest.rollback]
 
 
 # --------------------------------------------------------------------------
@@ -843,7 +857,7 @@ def _grant_satisfies(
     normalized: NormalizedRequest,
     permission_class: PermissionClass,
     environment: DispatchEnvironment,
-    moment: datetime.datetime,
+    now: datetime.datetime,
 ) -> bool:
     """Does this minted grant authorize THIS action, right now? Fail-closed.
 
@@ -860,13 +874,11 @@ def _grant_satisfies(
        raised to CONFIRM_EXACT.
     """
     service = environment.token_service
-    if service is None:
-        return False
-    if service.verify(grant.token, grant.record, moment) is not TokenVerdict.VALID:
-        return False
-    if grant.record.action_hash != normalized.action_hash:
-        return False
-    return rank(PermissionClass(grant.record.policy_class.value)) >= rank(permission_class)
+    verdict = service.verify(grant.token, grant.record, now) if service else None
+    valid = verdict is TokenVerdict.VALID
+    same_action = grant.record.action_hash == normalized.action_hash
+    strong_enough = rank(PermissionClass(grant.record.policy_class.value)) >= rank(permission_class)
+    return valid and same_action and strong_enough
 
 
 def dispatch(
@@ -876,6 +888,7 @@ def dispatch(
     environment: DispatchEnvironment,
     path_args: Sequence[str] = (),
     create_if_missing: bool = False,
+    execution_argv: Sequence[str] | None = None,
     grant: ApprovalGrant | None = None,
     now: datetime.datetime | None = None,
 ) -> DispatchDecision:
@@ -908,6 +921,7 @@ def dispatch(
             environment=environment,
             path_args=path_args,
             create_if_missing=create_if_missing,
+            execution_argv=execution_argv,
         )
     # ONLY the model's schema violation is caught here, and it is caught BY TYPE.
     # Every other DispatchError is a WIRING failure and propagates. The first
@@ -1046,9 +1060,7 @@ def profile_for(manifest: ToolManifest) -> Profile:
     This is derivation, not policy: the manifest already declared the capability
     and §7.2 already fixed the class. Nothing here can widen either.
     """
-    if manifest.capabilities.fs is FsCapability.WRITE_SCOPED:
-        return Profile.WS
-    return Profile.RO
+    return Profile.WS if manifest.capabilities.fs is FsCapability.WRITE_SCOPED else Profile.RO
 
 
 def _within(inner: str, outer: str) -> bool:
@@ -1183,6 +1195,15 @@ def build_exec_argv(
         invalid path, argv or mount shape — a WIRING failure, not policy.
     """
     profile = profile_for(manifest)
+    if manifest.name in {"test.run", "proc.exec"} and list(argv) != normalized.args.get("argv"):
+        raise ExecRefused(ARGV_REBOUND, "spawn argv differs from approval binding")
+    executable = argv[0] if argv else ""
+    if manifest.name == "proc.exec" and (
+        executable not in environment.stores.exec_allowlist
+        or _executable_identity(executable) != normalized.args.get("__executable_identity")
+    ):
+        detail = "proc.exec executable is absent from the allowlist or changed after approval"
+        raise ExecRefused(handler_api.EXECUTABLE_REFUSED, detail)
     if profile is Profile.WS:
         _check_write_scope(normalized)
         _check_venv_binding(normalized, environment)
@@ -1471,12 +1492,8 @@ def _validate_result(manifest: ToolManifest, payload: Mapping[str, Any]) -> Tool
         Draft202012Validator(manifest.output_schema).validate(dict(payload))
     except (SchemaError, JsonSchemaValidationError) as exc:
         location = "/".join(str(part) for part in exc.absolute_path) or "<root>"
-        return ToolError(
-            kind=MALFORMED_TOOL_RESULT,
-            message_redacted=(
-                f"{manifest.name} result invalid at {location} (failed {exc.validator!r})"
-            ),
-        )
+        message = f"{manifest.name} result invalid at {location} (failed {exc.validator!r})"
+        return ToolError(kind=MALFORMED_TOOL_RESULT, message_redacted=message)
     return None
 
 

@@ -44,6 +44,8 @@ class PolicyStores:
     audit_store: str
     policy_store: str
     kernel_secret: str
+    net_allowlist: frozenset[str] = frozenset()
+    exec_allowlist: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         # FAIL-CLOSED (S2): an empty or relative field would ``normpath`` to "."
@@ -51,13 +53,11 @@ class PolicyStores:
         # the I8 kernel.secret read guard) on a construction/misconfig bug.
         # ``os.path.isabs`` is a pure string check — no filesystem, environment,
         # or symlink access (§2.2 purity preserved).
-        for name, value in (
-            ("home", self.home),
-            ("audit_store", self.audit_store),
-            ("policy_store", self.policy_store),
-            ("kernel_secret", self.kernel_secret),
-        ):
-            if not value or not os.path.isabs(value):
-                raise PolicyStoresError(
-                    f"PolicyStores.{name} must be a non-empty absolute path, got {value!r}"
-                )
+        for name in ("home", "audit_store", "policy_store", "kernel_secret"):
+            if not (value := getattr(self, name)) or not os.path.isabs(value):
+                raise PolicyStoresError(f"PolicyStores.{name} must be absolute: {value!r}")
+        for name in ("net_allowlist", "exec_allowlist"):
+            if not isinstance(getattr(self, name), frozenset):
+                raise PolicyStoresError(f"PolicyStores.{name} must be an immutable frozenset")
+        if any(not isinstance(p, str) or not os.path.isabs(p) for p in self.exec_allowlist):
+            raise PolicyStoresError("PolicyStores.exec_allowlist paths must be absolute")

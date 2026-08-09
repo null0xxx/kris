@@ -167,9 +167,7 @@ def context_for(
     args: dict[str, Any] = {"path": str(target)}
     args.update(args_extra or {})
     request = ToolRequest(call_id="c1", tool=tool, args=args)
-    decision = dispatch(
-        request, manifest=manifest, environment=environment, path_args=["path"]
-    )
+    decision = dispatch(request, manifest=manifest, environment=environment, path_args=["path"])
     assert decision.decision is Decision.PROCEED, decision
     normalized = decision.normalized
     assert normalized is not None
@@ -181,7 +179,6 @@ def context_for(
         environment=environment,
         canary_paths=canary_paths,
     )
-
 
 
 def find(
@@ -208,9 +205,7 @@ def find(
 # ==========================================================================
 
 
-def test_a_text_file_is_returned_as_utf8(
-    environment: DispatchEnvironment, workspace: Path
-) -> None:
+def test_a_text_file_is_returned_as_utf8(environment: DispatchEnvironment, workspace: Path) -> None:
     payload = read_file(context_for(environment, workspace / "a.txt"))
     assert payload == {
         "content": "hello\n",
@@ -545,12 +540,8 @@ def test_a_proc_none_tool_runs_without_spawning_anything(
 ) -> None:
     """`fs.read` declares `proc: none` (§6.4): no child, and no sandbox probe."""
     manifest = manifest_for("fs.read")
-    request = ToolRequest(
-        call_id="c1", tool="fs.read", args={"path": str(workspace / "a.txt")}
-    )
-    decision = dispatch(
-        request, manifest=manifest, environment=environment, path_args=["path"]
-    )
+    request = ToolRequest(call_id="c1", tool="fs.read", args={"path": str(workspace / "a.txt")})
+    decision = dispatch(request, manifest=manifest, environment=environment, path_args=["path"])
     assert decision.decision is Decision.PROCEED
 
     def exploding_probe() -> Any:
@@ -591,9 +582,7 @@ def test_a_refusing_handler_is_BLOCKED_and_still_journalled(
     decoy = workspace / "id_rsa"
     decoy.write_text(CANARY_BODY, encoding="utf-8")
     request = ToolRequest(call_id="c1", tool="fs.read", args={"path": str(decoy)})
-    decision = dispatch(
-        request, manifest=manifest, environment=environment, path_args=["path"]
-    )
+    decision = dispatch(request, manifest=manifest, environment=environment, path_args=["path"])
     assert decision.decision is Decision.PROCEED
 
     def tripwire(context: HandlerContext) -> dict[str, Any]:
@@ -631,12 +620,8 @@ def test_a_proc_none_tool_without_a_handler_is_BLOCKED(
 ) -> None:
     """Fail closed: no handler is not "fall back to spawning something"."""
     manifest = manifest_for("fs.read")
-    request = ToolRequest(
-        call_id="c1", tool="fs.read", args={"path": str(workspace / "a.txt")}
-    )
-    decision = dispatch(
-        request, manifest=manifest, environment=environment, path_args=["path"]
-    )
+    request = ToolRequest(call_id="c1", tool="fs.read", args={"path": str(workspace / "a.txt")})
+    decision = dispatch(request, manifest=manifest, environment=environment, path_args=["path"])
     outcome = run(
         decision,
         manifest=manifest,
@@ -703,12 +688,8 @@ def test_the_in_process_route_refuses_a_non_empty_argv(
 ) -> None:
     """An argv nobody runs would be a lie in the journal's env/action binding."""
     manifest = manifest_for("fs.read")
-    request = ToolRequest(
-        call_id="c1", tool="fs.read", args={"path": str(workspace / "a.txt")}
-    )
-    decision = dispatch(
-        request, manifest=manifest, environment=environment, path_args=["path"]
-    )
+    request = ToolRequest(call_id="c1", tool="fs.read", args={"path": str(workspace / "a.txt")})
+    decision = dispatch(request, manifest=manifest, environment=environment, path_args=["path"])
     outcome = run(
         decision,
         manifest=manifest,
@@ -753,9 +734,7 @@ def test_manifest_matches_the_6_4_catalog_row(
 #: T3.04's batch, by name. Kept as a literal set rather than derived from the
 #: catalog: deriving it would make this file agree with whatever is installed,
 #: which is the one thing it exists not to do.
-READ_ONLY_BATCH = frozenset(
-    {"fs.read", "fs.list", "fs.find", "sys.info", "pkg.query", "git.read"}
-)
+READ_ONLY_BATCH = frozenset({"fs.read", "fs.list", "fs.find", "sys.info", "pkg.query", "git.read"})
 
 
 def test_the_read_batch_is_exactly_the_six_AUTO_READ_tools() -> None:
@@ -793,8 +772,10 @@ def test_no_read_only_tool_can_write_or_reach_the_network() -> None:
     for name in READ_ONLY_BATCH:
         capabilities = REGISTRY[name].capabilities
         assert capabilities.fs.value != "write_scoped", name
-    for name in REGISTRY.names:
-        assert REGISTRY[name].capabilities.net.value == "none", name
+    network_tools = {
+        name for name in REGISTRY.names if REGISTRY[name].capabilities.net.value != "none"
+    }
+    assert network_tools == {"net.fetch"}
 
 
 def test_the_manifest_directory_is_packaged() -> None:
@@ -822,9 +803,7 @@ def listed(payload: dict[str, Any]) -> list[str]:
     return [entry["path"] for entry in payload["entries"]]
 
 
-def test_entries_come_back_sorted(
-    environment: DispatchEnvironment, workspace: Path
-) -> None:
+def test_entries_come_back_sorted(environment: DispatchEnvironment, workspace: Path) -> None:
     """§6.4 says "sorted". Sorted output is what makes two runs comparable."""
     root = workspace / "t"
     root.mkdir()
@@ -909,9 +888,7 @@ def test_name_mode_matches_on_the_basename(
     assert not [m for m in payload["matches"] if m.endswith("zeta.txt")]
 
 
-def test_glob_mode_matches_a_pattern(
-    environment: DispatchEnvironment, workspace: Path
-) -> None:
+def test_glob_mode_matches_a_pattern(environment: DispatchEnvironment, workspace: Path) -> None:
     root = workspace / "t"
     root.mkdir()
     tree(root)
@@ -1861,6 +1838,7 @@ def test_the_truncation_charge_scales_with_the_path_length(
     Same number of files, same content, only the NAMES differ — so any charge
     that ignores `len(rel)` yields identical results and this test fails.
     """
+
     def build(name: str, width: int) -> int:
         root = workspace / name
         root.mkdir()

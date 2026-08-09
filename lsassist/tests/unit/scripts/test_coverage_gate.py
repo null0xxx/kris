@@ -60,6 +60,7 @@ is written in the JSON subset of YAML).
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -561,9 +562,7 @@ def test_raise_not_implemented_is_not_excluded(tmp_path: Path) -> None:
 def test_a_never_imported_module_is_measured_not_omitted(tmp_path: Path) -> None:
     """``source`` (unlike ``include``) forces never-imported files into the
     report at 0%. Adding dead, untested code to the TCB must turn the gate red."""
-    root = _fixture_repo(
-        tmp_path, {"m": FULLY_COVERED, "orphan": PARTIAL_BRANCH}, DRIVER_BOTH
-    )
+    root = _fixture_repo(tmp_path, {"m": FULLY_COVERED, "orphan": PARTIAL_BRANCH}, DRIVER_BOTH)
     result = _gate(root)
     assert result.returncode != EXIT_OK, f"an unimported module passed:\n{result.stdout}"
     assert "pkg/orphan.py" in result.stdout, result.stdout
@@ -617,6 +616,7 @@ CI_JOBS = (
     "tcb-loc",
     "coverage",
     "dispatcher-coverage",
+    "t306-handler-coverage",
     # T3.03. `tests/integration` and `tests/e2e` assert what only a REAL spawn
     # can show — that the workspace bind is the only writable path, that the host
     # is absent from the mount view, that a timeout kills the GROUP. Until this
@@ -707,8 +707,13 @@ def test_every_test_layer_that_carries_a_gate_is_executed_by_ci() -> None:
     commands = " ".join(
         str(step.get("run", "")) for job in _jobs().values() for step in _steps(job)
     )
-    for layer in ("tests/unit", "tests/property", "tests/contract", "tests/integration",
-                  "tests/e2e"):
+    for layer in (
+        "tests/unit",
+        "tests/property",
+        "tests/contract",
+        "tests/integration",
+        "tests/e2e",
+    ):
         assert layer in commands, f"no CI job runs {layer}; its gates never execute"
 
 
@@ -861,8 +866,7 @@ def test_pragma_grep_fails_closed_when_a_tcb_package_is_missing(
     root = _tcb_shaped_tree(tmp_path, {}, skip=package.rsplit("/", 1)[-1])
     result = _run_pragma_step(root)
     assert result.returncode != EXIT_OK, (
-        "the pragma grep failed OPEN with a TCB package missing:\n"
-        f"{result.stdout}\n{result.stderr}"
+        f"the pragma grep failed OPEN with a TCB package missing:\n{result.stdout}\n{result.stderr}"
     )
 
 
@@ -887,3 +891,52 @@ def test_coverage_data_files_are_gitignored() -> None:
             cwd=REPO_ROOT,
         )
         assert result.returncode == EXIT_OK, f"{candidate} is not gitignored"
+
+
+# --------------------------------------------------------------------------
+# T3.06 handler floor — the third integration-only security property now owns CI
+# --------------------------------------------------------------------------
+T306_HANDLER_SOURCES = (
+    "lsassist.tools.handlers.test_run",
+    "lsassist.tools.handlers.proc_exec",
+    "lsassist.tools.handlers.net_fetch",
+)
+T306_TEST_PATHS = (
+    "tests/unit/tools/test_exec_net_tools.py",
+    "tests/integration/tools/test_exec_net_sandbox.py",
+)
+
+
+def test_t306_handler_coverage_job_is_exact_and_blocking() -> None:
+    jobs = _jobs()
+    assert "t306-handler-coverage" in jobs
+    job = jobs["t306-handler-coverage"]
+    assert job.get("timeout-minutes") == 15
+    scripts = _run_scripts(job)
+    assert any("apt-get install -y bubblewrap" in script for script in scripts)
+    measurement = [script for script in scripts if "coverage run" in script]
+    assert len(measurement) == 1
+    command = measurement[0]
+    assert "--branch" in command
+    assert f"--source={','.join(T306_HANDLER_SOURCES)}" in command
+    assert all(path in command for path in T306_TEST_PATHS)
+    reports = [script for script in scripts if "coverage report" in script]
+    assert reports == [".venv/bin/python -m coverage report --fail-under=90 --show-missing"]
+    assert "continue-on-error" not in job
+
+
+def test_t306_integration_module_is_marked_for_exact_ci_selection() -> None:
+    module = REPO_ROOT / "tests/integration/tools/test_exec_net_sandbox.py"
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    assignments = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "pytestmark" for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1
+    assert ast.unparse(assignments[0].value) == "pytest.mark.integration"
+    pytest_config = _pyproject()["tool"]["pytest"]["ini_options"]  # type: ignore[index]
+    assert "integration: real sandbox or local-network boundary" in pytest_config["markers"]

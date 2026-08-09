@@ -1,0 +1,45 @@
+{
+  "name": "proc.exec",
+  "version": "1.0.0",
+  "purpose": "Execute an argv whose absolute program path exactly matches the injected immutable allowlist.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["argv"],
+    "properties": {
+      "argv": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 256,
+        "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["stdout", "exit_code"],
+    "properties": {
+      "stdout": {"type": "string"},
+      "exit_code": {"type": "integer", "minimum": 0, "maximum": 255}
+    }
+  },
+  "permission_class": "CONFIRM_ONCE",
+  "capabilities": {"fs": "write_scoped", "net": "none", "proc": "spawn_argv"},
+  "timeout_s": 120,
+  "output_limits": {
+    "max_stdout_bytes": 50000,
+    "max_stderr_bytes": 50000,
+    "max_result_chars": 50000
+  },
+  "concurrency": "exclusive",
+  "idempotent": false,
+  "dry_run": false,
+  "rollback": "manual_steps",
+  "redaction": ["paths", "secrets", "env"],
+  "path_scope": "workspace",
+  "tests": [
+    "tests/unit/tools/test_exec_net_tools.py",
+    "tests/integration/tools/test_exec_net_sandbox.py"
+  ]
+}

@@ -45,13 +45,23 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard, typing only
 
 __all__ = [
     "ANCHOR_MISS",
+    "ARGV_REBOUND",
+    "BODY_TOO_LARGE",
     "CANARY_TRIPPED",
     "CHECKPOINT_FAILED",
+    "CONTENT_TYPE_REFUSED",
     "DENY_PATH",
+    "EXECUTABLE_REFUSED",
+    "FETCH_FAILED",
+    "MEMORY_STORE_FAILED",
     "READ_FAILED",
+    "REDIRECT_REFUSED",
+    "RUNNER_AMBIGUOUS",
+    "RUNNER_MISSING",
     "TARGET_EXISTS",
     "TARGET_REPLACED",
     "TIMED_OUT",
+    "URL_REFUSED",
     "WORKSPACE_SCOPE",
     "WRITE_FAILED",
     "Handler",
@@ -144,6 +154,18 @@ ANCHOR_MISS: Final = "anchor_miss"
 #: change; without the checkpoint that licence does not exist, and proceeding
 #: would leave it believing in a rollback that was never made.
 CHECKPOINT_FAILED: Final = "checkpoint_failed"
+
+# -- T3.06, exec/network ----------------------------------------------------
+ARGV_REBOUND: Final = "argv_rebound"
+EXECUTABLE_REFUSED: Final = "executable_refused"
+RUNNER_MISSING: Final = "runner_missing"
+RUNNER_AMBIGUOUS: Final = "runner_ambiguous"
+URL_REFUSED: Final = "url_refused"
+REDIRECT_REFUSED: Final = "redirect_refused"
+CONTENT_TYPE_REFUSED: Final = "content_type_refused"
+BODY_TOO_LARGE: Final = "body_too_large"
+MEMORY_STORE_FAILED: Final = "memory_store_failed"
+FETCH_FAILED: Final = "fetch_failed"
 
 
 class HandlerRefused(Exception):

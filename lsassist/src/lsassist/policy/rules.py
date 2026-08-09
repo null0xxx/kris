@@ -167,12 +167,6 @@ def _git_is_destructive(argv: list[str]) -> bool:
 # (any path access), matching the read-exposure invariant I8.
 _WRITE_INTENT_TOOLS: frozenset[str] = frozenset({"fs.write", "fs.patch"})
 
-# R6 net.fetch domain allowlist. Empty DEFAULT for now — every fetch domain is
-# thus off-allowlist → CONFIRM_EXACT until the configured allowlist is wired
-# (later task). Documented as an intentional empty constant.
-_NET_ALLOWLIST: frozenset[str] = frozenset()
-
-
 # --- rules (each pure over (request, context, stores); R3 is applied post-fold) --
 # ``stores`` is threaded to every rule for a uniform fold signature; only R2/R7
 # consult it (the injected §7.3 store trees).
@@ -263,13 +257,11 @@ def r6(
     request: ToolRequest, context: PolicyContext, stores: PolicyStores
 ) -> PermissionClass | None:
     """R6: ``net.fetch`` whose ``domain`` is not in the allowlist → CONFIRM_EXACT.
-    Reads ``domain: str``. Default allowlist is empty (see ``_NET_ALLOWLIST``)."""
-    if request.tool != "net.fetch":
-        return None
+    Reads ``domain: str`` from the request and the immutable configured set from stores."""
     domain = request.args.get("domain")
-    if not isinstance(domain, str) or not domain:
+    if request.tool != "net.fetch" or not isinstance(domain, str) or not domain:
         return None
-    return None if domain in _NET_ALLOWLIST else _CE
+    return None if domain.lower().rstrip(".") in stores.net_allowlist else _CE
 
 
 def r7(

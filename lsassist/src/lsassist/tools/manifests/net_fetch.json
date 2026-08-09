@@ -1,0 +1,50 @@
+{
+  "name": "net.fetch",
+  "version": "1.0.0",
+  "purpose": "Fetch one validated HTTP(S) resource and retain its bounded body only in session RAM.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["method", "scheme", "domain", "target"],
+    "properties": {
+      "method": {"type": "string", "enum": ["GET", "HEAD"]},
+      "scheme": {"type": "string", "enum": ["https", "http"]},
+      "domain": {"type": "string", "minLength": 1, "maxLength": 253},
+      "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+      "target": {"type": "string", "minLength": 1, "maxLength": 8192, "pattern": "^/"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["url", "method", "status_code", "content_type", "body_ref", "byte_count", "digest", "redirects"],
+    "properties": {
+      "url": {"type": "string"},
+      "method": {"type": "string", "enum": ["GET", "HEAD"]},
+      "status_code": {"type": "integer", "minimum": 200, "maximum": 299},
+      "content_type": {"type": "string"},
+      "body_ref": {"type": ["string", "null"], "pattern": "^memory:fetch/[A-Za-z0-9_-]+$"},
+      "byte_count": {"type": "integer", "minimum": 0, "maximum": 1048576},
+      "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+      "redirects": {"type": "integer", "minimum": 0, "maximum": 5}
+    }
+  },
+  "permission_class": "CONFIRM_ONCE",
+  "capabilities": {"fs": "none", "net": "fetch_allowlist", "proc": "none"},
+  "timeout_s": 30,
+  "output_limits": {
+    "max_stdout_bytes": 1048576,
+    "max_stderr_bytes": 65536,
+    "max_result_chars": 200000
+  },
+  "concurrency": "unrestricted",
+  "idempotent": true,
+  "dry_run": false,
+  "rollback": "none",
+  "redaction": ["full_body", "secrets"],
+  "path_scope": "any_read",
+  "tests": [
+    "tests/unit/tools/test_exec_net_tools.py",
+    "tests/integration/tools/test_exec_net_sandbox.py"
+  ]
+}

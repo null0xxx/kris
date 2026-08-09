@@ -32,6 +32,7 @@ deadlocks the child against a full pipe).
 from __future__ import annotations
 
 import ast
+import dataclasses
 import datetime
 import json
 import os
@@ -57,6 +58,7 @@ from lsassist.policy.token import TokenService
 from lsassist.sandbox.availability import SandboxAvailable, SandboxUnavailable
 from lsassist.sandbox.profiles import SYSTEM_RO_BINDS
 from lsassist.tools.dispatcher import (
+    ARGV_REBOUND,
     ENV_REBOUND,
     MALFORMED_TOOL_RESULT,
     PATH_INVALIDATED,
@@ -74,6 +76,7 @@ from lsassist.tools.dispatcher import (
     run,
     spawn_capped,
 )
+from lsassist.tools.handlers import EXECUTABLE_REFUSED
 from lsassist.tools.result import (
     ExecObservation,
     OutputSink,
@@ -363,9 +366,7 @@ def test_build_result_reports_ok_error_and_truncated_in_that_priority() -> None:
 
 def test_a_timeout_is_an_error_even_with_exit_code_zero() -> None:
     """A killed tool can still be reaped with a 0 status on some paths."""
-    result = build_result(
-        tool="sys.info", observation=echo_observation(timed_out=True), result={}
-    )
+    result = build_result(tool="sys.info", observation=echo_observation(timed_out=True), result={})
     assert result.status is ToolResultStatus.ERROR
     assert result.error is not None
     assert result.error.kind == "timeout"
@@ -391,8 +392,12 @@ def test_the_profile_is_derived_from_the_declared_capability_not_guessed() -> No
     must write cannot run under ``ro``.
     """
     assert profile_for(make_manifest()) is Profile.RO
-    assert profile_for(make_manifest(capabilities={"fs": "read_scoped", "net": "none",
-                                                   "proc": "none"})) is Profile.RO
+    assert (
+        profile_for(
+            make_manifest(capabilities={"fs": "read_scoped", "net": "none", "proc": "none"})
+        )
+        is Profile.RO
+    )
     assert profile_for(write_manifest()) is Profile.WS
 
 
@@ -438,9 +443,7 @@ def test_the_child_env_is_EXACTLY_the_env_the_approval_bound(
         argv=["/bin/echo", "hi"],
     )
 
-    emitted = {
-        argv[i + 1]: argv[i + 2] for i, token in enumerate(argv) if token == "--setenv"
-    }
+    emitted = {argv[i + 1]: argv[i + 2] for i, token in enumerate(argv) if token == "--setenv"}
     assert decision.normalized is not None
     assert emitted == dict(decision.normalized.env)
 
@@ -456,8 +459,9 @@ def test_a_venv_that_appeared_after_approval_blocks_instead_of_running(
     ``python`` runs. The window is small; the consequence is a hijacked approved
     binary, so it is refused rather than reported afterwards.
     """
-    manifest = write_manifest(capabilities={"fs": "write_scoped", "net": "none",
-                                            "proc": "spawn_argv"})
+    manifest = write_manifest(
+        capabilities={"fs": "write_scoped", "net": "none", "proc": "spawn_argv"}
+    )
     decision = proceeding(
         environment, manifest, {"path": str(workspace / "a.txt")}, path_args=["path"]
     )
@@ -663,6 +667,7 @@ def test_only_the_dispatcher_can_reach_the_raw_runner() -> None:
     matching substring at all. Naming a test after a property it does not check is
     worse than not having it: it spends the reviewer's attention.
     """
+
     def names_the_runner(node: ast.AST) -> bool:
         """Any spelling that puts the function in another module's hands."""
         if isinstance(node, ast.Name):
@@ -702,8 +707,218 @@ def test_only_the_dispatcher_can_reach_the_raw_runner() -> None:
 # ==========================================================================
 # D. §8.3 / I11 — never an unsandboxed exec
 # ==========================================================================
+def test_run_refuses_argv_rewritten_after_action_binding(
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    journal: AuditWriter,
+) -> None:
+    manifest = make_manifest(
+        name="proc.exec",
+        input_schema={
+            "type": "object",
+            "required": ["argv"],
+            "properties": {"argv": {"type": "array", "items": {"type": "string"}}},
+            "additionalProperties": False,
+        },
+    )
+    decision = proceeding(environment, manifest, {"argv": ["/usr/bin/true"]})
+    spawned: list[list[str]] = []
+
+    def record(argv: list[str], **_: Any) -> ExecObservation:
+        spawned.append(list(argv))
+        return echo_observation()
+
+    outcome = run(
+        decision,
+        manifest=manifest,
+        environment=environment,
+        cache_dir=cache_dir,
+        task_id="t-bound-argv",
+        audit=journal,
+        argv=["/usr/bin/touch", "rewritten"],
+        probe_fn=fake_receipt,
+        runner=record,
+    )
+    assert outcome.decision is Decision.BLOCKED
+    assert outcome.result.error is not None
+    assert outcome.result.error.kind == ARGV_REBOUND
+    assert spawned == []
+
+
+def test_proc_exec_public_run_refuses_default_empty_executable_allowlist(
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    journal: AuditWriter,
+) -> None:
+    manifest = make_manifest(
+        name="proc.exec",
+        input_schema={
+            "type": "object",
+            "required": ["argv"],
+            "properties": {"argv": {"type": "array", "items": {"type": "string"}}},
+            "additionalProperties": False,
+        },
+    )
+    decision = proceeding(environment, manifest, {"argv": ["/usr/bin/true"]})
+    spawned: list[list[str]] = []
+
+    def record(argv: list[str], **_: Any) -> ExecObservation:
+        spawned.append(list(argv))
+        return echo_observation()
+
+    outcome = run(
+        decision,
+        manifest=manifest,
+        environment=environment,
+        cache_dir=cache_dir,
+        task_id="t-empty-exec-allowlist",
+        audit=journal,
+        argv=["/usr/bin/true"],
+        probe_fn=fake_receipt,
+        runner=record,
+    )
+    assert outcome.decision is Decision.BLOCKED
+    assert outcome.result.error is not None
+    assert outcome.result.error.kind == EXECUTABLE_REFUSED
+    assert "allowlist" in outcome.result.error.message_redacted
+    assert spawned == []
+
+
+def test_proc_exec_public_run_allows_only_an_exact_configured_executable(
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    journal: AuditWriter,
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "replaceable"
+    executable.write_text("first", encoding="utf-8")
+    allowed = dataclasses.replace(
+        environment,
+        stores=dataclasses.replace(
+            environment.stores, exec_allowlist=frozenset({str(executable)})
+        ),
+    )
+    manifest = make_manifest(
+        name="proc.exec",
+        input_schema={
+            "type": "object",
+            "required": ["argv"],
+            "properties": {"argv": {"type": "array", "items": {"type": "string"}}},
+            "additionalProperties": False,
+        },
+    )
+    decision = proceeding(allowed, manifest, {"argv": [str(executable)]})
+    executable.write_text("replacement-is-longer", encoding="utf-8")
+    spawned: list[list[str]] = []
+
+    def record(argv: list[str], **_: Any) -> ExecObservation:
+        spawned.append(list(argv))
+        return echo_observation()
+
+    outcome = run(
+        decision,
+        manifest=manifest,
+        environment=allowed,
+        cache_dir=cache_dir,
+        task_id="t-exact-exec-allowlist",
+        audit=journal,
+        argv=[str(executable)],
+        probe_fn=fake_receipt,
+        runner=record,
+    )
+    assert outcome.decision is Decision.BLOCKED
+    assert outcome.result.error is not None
+    assert outcome.result.error.kind == EXECUTABLE_REFUSED
+    assert spawned == []
+
+
+def test_test_run_public_run_refuses_unbound_touch_before_marker_creation(
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    journal: AuditWriter,
+    tmp_path: Path,
+) -> None:
+    manifest = make_manifest(
+        name="test.run",
+        input_schema={
+            "type": "object",
+            "properties": {"extra_args": {"type": "array", "items": {"type": "string"}}},
+            "additionalProperties": False,
+        },
+    )
+    decision = proceeding(environment, manifest, {"extra_args": []})
+    marker = tmp_path / "must-not-exist"
+
+    def touch_marker(argv: list[str], **_: Any) -> ExecObservation:
+        marker.touch()
+        return echo_observation()
+
+    outcome = run(
+        decision,
+        manifest=manifest,
+        environment=environment,
+        cache_dir=cache_dir,
+        task_id="t-unbound-test-run",
+        audit=journal,
+        argv=["/usr/bin/touch", str(marker)],
+        probe_fn=fake_receipt,
+        runner=touch_marker,
+    )
+    assert outcome.decision is Decision.BLOCKED
+    assert outcome.result.error is not None
+    assert outcome.result.error.kind == ARGV_REBOUND
+    assert "approval binding" in outcome.result.error.message_redacted
+    assert not marker.exists()
+
+
+def test_test_run_public_run_rechecks_runner_against_action_hash(
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    journal: AuditWriter,
+    tmp_path: Path,
+) -> None:
+    manifest = make_manifest(
+        name="test.run",
+        input_schema={
+            "type": "object",
+            "properties": {"extra_args": {"type": "array", "items": {"type": "string"}}},
+            "additionalProperties": False,
+        },
+    )
+    decision = proceeding(
+        environment, manifest, {"extra_args": []}, execution_argv=["/usr/bin/true"]
+    )
+    assert decision.normalized is not None
+    marker = tmp_path / "forged-runner"
+    forged = dataclasses.replace(
+        decision,
+        normalized=dataclasses.replace(decision.normalized, argv=("/usr/bin/touch", str(marker))),
+    )
+
+    def touch_marker(argv: list[str], **_: Any) -> ExecObservation:
+        marker.touch()
+        return echo_observation()
+
+    outcome = run(
+        forged,
+        manifest=manifest,
+        environment=environment,
+        cache_dir=cache_dir,
+        task_id="t-forged-action-hash",
+        audit=journal,
+        argv=["/usr/bin/touch", str(marker)],
+        probe_fn=fake_receipt,
+        runner=touch_marker,
+    )
+    assert outcome.decision is Decision.BLOCKED
+    assert outcome.result.error is not None
+    assert outcome.result.error.kind == ARGV_REBOUND
+    assert not marker.exists()
+
+
 def test_an_unavailable_sandbox_BLOCKS_and_spawns_nothing(
-    environment: DispatchEnvironment, cache_dir: str,
+    environment: DispatchEnvironment,
+    cache_dir: str,
     journal: AuditWriter,
 ) -> None:
     """§8.3: "bwrap spawn failure → typed error ``sandbox_unavailable`` → exec
@@ -735,7 +950,9 @@ def test_an_unavailable_sandbox_BLOCKS_and_spawns_nothing(
 
 
 def test_run_refuses_an_argv_that_is_not_sandbox_shaped(
-    environment: DispatchEnvironment, cache_dir: str, monkeypatch: pytest.MonkeyPatch,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    monkeypatch: pytest.MonkeyPatch,
     journal: AuditWriter,
 ) -> None:
     """The receipt gate is defense in depth; the LOAD-BEARING boundary is the
@@ -765,10 +982,12 @@ def test_run_refuses_an_argv_that_is_not_sandbox_shaped(
 
 
 def test_run_refuses_a_decision_that_did_not_proceed(
-    environment: DispatchEnvironment, cache_dir: str, tmp_path: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    tmp_path: Path,
     journal: AuditWriter,
 ) -> None:
-    """"Nothing executes without a decision to execute" is structural in
+    """ "Nothing executes without a decision to execute" is structural in
     :class:`DispatchDecision`; running one anyway is a WIRING bug, not policy."""
     manifest = make_manifest()
     request = ToolRequest(call_id="c1", tool="sys.info", args={"probe": "uname"})
@@ -796,7 +1015,10 @@ def test_run_refuses_a_decision_that_did_not_proceed(
 # E. §7.5 step 3 — pre-exec re-canonicalization
 # ==========================================================================
 def test_a_path_retargeted_between_approval_and_exec_blocks(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path, tmp_path: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
+    tmp_path: Path,
     journal: AuditWriter,
 ) -> None:
     """§7.5 step 3: "Pre-exec re-canonicalization: თითო path თავიდან resolve →
@@ -858,7 +1080,8 @@ def test_normalize_snapshots_the_parent_of_a_create_intent_path(
 # F. step 8 — verify
 # ==========================================================================
 def test_a_result_that_violates_output_schema_is_an_error_not_an_ok(
-    environment: DispatchEnvironment, cache_dir: str,
+    environment: DispatchEnvironment,
+    cache_dir: str,
     journal: AuditWriter,
 ) -> None:
     """§6.3 step 8: "result-ის validation ``output_schema``-ზე"."""
@@ -890,7 +1113,9 @@ def test_a_result_that_violates_output_schema_is_an_error_not_an_ok(
 
 
 def test_a_write_tool_gets_a_post_exec_file_snapshot_as_evidence(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """§7.5 step 6: "expected paths-ის inode/hash snapshot compare (write
@@ -921,7 +1146,9 @@ def test_a_write_tool_gets_a_post_exec_file_snapshot_as_evidence(
 
 
 def test_an_atomic_replace_is_verified_because_that_is_what_a_write_IS(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """§6.4's ``fs.write`` is "atomic: tmp+``fsync``+``rename``", so the target's
@@ -993,7 +1220,8 @@ def test_a_path_retargeted_DURING_the_exec_is_UNVERIFIED_with_an_audit_alert(
 
 
 def test_a_read_tool_reports_verification_as_not_applicable(
-    environment: DispatchEnvironment, cache_dir: str,
+    environment: DispatchEnvironment,
+    cache_dir: str,
     journal: AuditWriter,
 ) -> None:
     """NAMED RESIDUAL, not an oversight: SPEC:564 scopes §7.5 step 6 to WRITE
@@ -1018,7 +1246,8 @@ def test_a_read_tool_reports_verification_as_not_applicable(
 
 
 def test_an_oversized_result_becomes_digest_only(
-    environment: DispatchEnvironment, cache_dir: str,
+    environment: DispatchEnvironment,
+    cache_dir: str,
     journal: AuditWriter,
 ) -> None:
     """§6.5: "დიდი bodies digest-only + reference"; §6.2's ``max_result_chars``
@@ -1361,7 +1590,9 @@ def test_a_program_that_cannot_be_spawned_raises_rather_than_reporting_a_run() -
 
 
 def test_a_write_target_that_vanished_before_the_snapshot_is_UNVERIFIED(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """§7.5 step 6 evidence is taken from an ``open``, so the file can still go
@@ -1387,7 +1618,9 @@ def test_a_write_target_that_vanished_before_the_snapshot_is_UNVERIFIED(
 
 
 def test_a_write_target_that_was_deleted_is_UNVERIFIED(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """The ordinary version of the same event, with nothing lying."""
@@ -1403,7 +1636,9 @@ def test_a_write_target_that_was_deleted_is_UNVERIFIED(
 
 
 def test_a_swapped_PARENT_directory_is_UNVERIFIED(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """The subtle one, and the reason the parent identity is checked at all.
@@ -1444,7 +1679,9 @@ def test_a_write_target_too_large_to_hash_is_UNVERIFIED_not_partially_hashed(
 
 
 def test_a_write_target_that_is_a_DIRECTORY_yields_no_snapshot(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """``open`` on a directory SUCCEEDS and ``read`` then fails with ``EISDIR``.
@@ -1468,7 +1705,8 @@ def test_a_write_target_that_is_a_DIRECTORY_yields_no_snapshot(
 
 
 def test_a_write_tool_with_no_path_supplied_has_nothing_to_verify(
-    environment: DispatchEnvironment, cache_dir: str,
+    environment: DispatchEnvironment,
+    cache_dir: str,
     journal: AuditWriter,
 ) -> None:
     """An OPTIONAL path argument that was not supplied leaves §7.5 step 6 with no
@@ -1499,7 +1737,8 @@ def test_a_write_tool_with_no_path_supplied_has_nothing_to_verify(
 
 
 def test_a_tool_dispatched_without_a_result_builder_reports_an_empty_result(
-    environment: DispatchEnvironment, cache_dir: str,
+    environment: DispatchEnvironment,
+    cache_dir: str,
     journal: AuditWriter,
 ) -> None:
     """§6.1 gives the HANDLER the job of shaping ``result``, so the dispatcher's
@@ -1524,7 +1763,9 @@ def test_a_tool_dispatched_without_a_result_builder_reports_an_empty_result(
 
 
 def test_a_recheck_that_cannot_probe_the_filesystem_BLOCKS(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """``RecheckError`` is raised fail-closed by the §7.5 adapter when a path or
@@ -1559,7 +1800,9 @@ def test_a_recheck_that_cannot_probe_the_filesystem_BLOCKS(
 
 
 def test_a_step_5_refusal_becomes_a_BLOCKED_outcome_not_an_exception(
-    environment: DispatchEnvironment, cache_dir: str, workspace: Path,
+    environment: DispatchEnvironment,
+    cache_dir: str,
+    workspace: Path,
     journal: AuditWriter,
 ) -> None:
     """A ``.venv`` that appeared after approval is a fact about the world, so it
@@ -1757,8 +2000,11 @@ def test_a_result_that_cannot_be_serialized_is_a_journalled_error(
     run and before the §14.1 record is written.
     """
     manifest = make_manifest(
-        output_schema={"type": "object", "properties": {"stdout": {}},
-                       "additionalProperties": False}
+        output_schema={
+            "type": "object",
+            "properties": {"stdout": {}},
+            "additionalProperties": False,
+        }
     )
     decision = proceeding(environment, manifest, {"probe": "uname"})
 
@@ -1791,8 +2037,11 @@ def test_the_serialization_failure_message_names_the_type_and_nothing_else(
     substitution fails: record the exception TYPE, never its text.
     """
     manifest = make_manifest(
-        output_schema={"type": "object", "properties": {"stdout": {}},
-                       "additionalProperties": False}
+        output_schema={
+            "type": "object",
+            "properties": {"stdout": {}},
+            "additionalProperties": False,
+        }
     )
     decision = proceeding(environment, manifest, {"probe": "uname"})
 
