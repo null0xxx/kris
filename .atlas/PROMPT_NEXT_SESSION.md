@@ -3,8 +3,9 @@
 > **How to use.** Open a new session at `/home/null/Desktop/LinuxSec` (the git root,
 > **not** `lsassist/`) and paste everything below the line as a single message.
 >
-> Written 2026-07-30 at commit `a9293d4`, with **T3.05 LANDED and the working tree
-> clean**. Every number below is a **HYPOTHESIS TO FALSIFY** — §1 says why.
+> Written 2026-08-09 after commit `2753917`, with **T4.07 LANDED**. `main` was
+> **15 commits ahead of `origin/main` before this documentation edit**; nothing
+> was pushed. Every number below is a **HYPOTHESIS TO FALSIFY** — §1 says why.
 
 ---
 
@@ -15,8 +16,9 @@
 
 ### 0.1 `gentle-ai` სავალდებულოა — და ერთი დამტკიცებული ხაფანგი აქვს
 
-პლაგინი დაყენებულია (`gentle-ai 2.2.0`, `review mode: on`) და **ყოველი task-ის
-candidate გაივლის native review-ს:** `review start` → იზოლირებული 4R ლინზები →
+პლაგინი დაყენებულია (`gentle-ai 2.2.4`, `review mode: on`) და **ყოველი task-ის
+candidate გაივლის native review-ს:** `review start` → native-ის მიერ შერჩეული
+იზოლირებული ლინზები →
 `capture-result` → საჭიროებისას `review-refuter` → `capture-evidence` →
 `finalize` → `validate --gate pre-commit`.
 
@@ -74,7 +76,8 @@ forecast; მხოლოდ validation) — **ოთხივე იდენ�
 cd /home/null/Desktop/LinuxSec && git log --oneline -4 && git status --short
 ```
 
-**მოსალოდნელი HEAD: `a9293d4` ან უფრო ახალი `docs:` commit; სამუშაო ხე სუფთა.**
+**მოსალოდნელი HEAD: `2753917` ან უფრო ახალი `docs:` commit.** დოკუმენტაციის
+commit-მდე branch იყო `origin/main`-ზე **15 commit-ით წინ**. Push არ უნდა იყოს.
 
 ```bash
 cd /home/null/Desktop/LinuxSec/lsassist
@@ -104,7 +107,7 @@ $V/python -m coverage run --branch \
   -m pytest tests/unit/tools && $V/python -m coverage report --fail-under=100
 ```
 
-**მოსალოდნელი (გაზომილი 2026-07-30, `a9293d4`):** pytest **3036 passed, 0 failed,
+**მოსალოდნელი (გაზომილი 2026-08-09, `2753917`):** pytest **3071 passed, 0 failed,
 0 skipped** · ruff clean · `mypy --strict` clean 49 ფაილზე · **TCB LOC 6020 / 6000**
 · §23.1 **100% branch, 0 partial** · dispatcher+result **100%** · pragma ნული.
 
@@ -118,18 +121,21 @@ cp314-ს სამართლიანად უარყოფს. სწო�
 
 ## 2. სად ვართ — გაზომილი
 
-**33 / 70 task აშენებულია ≈ 47%.**
+**33 / 70 task აშენებულია = 47.1%.** ეს ხელახლა დათვლილია artifact-ების
+არსებობით და არა commit-message grep-ით. 34/70 იქნებოდა T3.05-ის ორჯერ დათვლა:
+მისი ფაილები ჯერ კიდევ uncommitted 32/70 snapshot-ში უკვე არსებობდა და ითვლებოდა;
+T4.07-მა მხოლოდ ერთი ახალი built task დაამატა.
 
 | Phase | | |
 |---|---|---|
 | 1 | 10/11 | 90.9% |
 | 2 | 13/13 | **100%** |
-| 3 | 7/14 | 50.0% |
-| 4 | 3/12 | 25.0% |
+| 3 | 6/14 | 42.9% |
+| 4 | 4/12 | 33.3% |
 | 5 | 0/14 | **0%** |
 | 6 | 0/6 | **0%** |
 
-⚠️ **47% task-ია, 0% მუშა პროგრამა.** `lsassist` ჯერ არ ეშვება: Phase 5 (CLI,
+⚠️ **47.1% task-ია, 0% მუშა პროგრამა.** `lsassist` ჯერ არ ეშვება: Phase 5 (CLI,
 session engine, coding/tutor) ხელუხლებელია და `src/`-ში **არაფერი აერთებს** არც
 T3.04/T3.05-ის handler-ებს, არც T4.04-ის store-ს. შეკრების წერტილი **T5.12**.
 Task-ების პროცენტი ≠ პროგრესი მუშა ხელსაწყოსკენ.
@@ -140,7 +146,48 @@ Task-ების პროცენტი ≠ პროგრესი მუ�
 repo root, `lsassist/`, და წინა `lsassist/`-ის მოჭრით. `lstrip("./")` წერტილს
 აჭამს `.github/…`-ს — ნუ გამოიყენებ.
 
-## 3. 🚨 ერთი გადაწყვეტილება, რომელიც შენ გელოდება
+## 3. T4.07-ის ბოლო, ზუსტი მდგომარეობა
+
+**T4.07 დაეშვა `2753917`-ზე.** შეიცვალა ზუსტად:
+
+- `lsassist/pyproject.toml`;
+- `lsassist/src/lsassist/memory/{__init__.py,migrations.py,schema.sql,store.py}`;
+- `lsassist/tests/unit/memory/{__init__.py,test_migrations.py,test_store.py}`.
+
+არქიტექტურა: §10.2-ის ზუსტი DDL + `schema_migrations`; WAL და foreign keys
+startup-ზე; ordered transactional migrations; unknown-newer-version refusal;
+0600 database creation; startup integrity check და actionable recovery message.
+`schema.sql` package data-ადაა გამოცხადებული და wheel-ში მისი არსებობა
+შემოწმებულია. Linux path boundary descriptor-anchored-ია: parent კომპონენტები
+`openat`/`O_NOFOLLOW`-ით იხსნება, ხოლო pinned parent/database descriptor-ები
+ancestor ან leaf symlink swap-ს database/WAL/SHM-ის გადამისამართების საშუალებას
+არ აძლევს. Native review-მდე გასწორდა ორივე: wheel-ში schema-ის არშეტანა და
+ancestor/leaf symlink authority-ის არასაკმარისი დაცვა.
+
+**დამტკიცებული floors:** 35 focused memory test · 3071 full test · Ruff clean ·
+mypy clean · §23.1 და dispatcher/result coverage ორივე **100%, 0 partial** · TCB
+**6020**, უცვლელი · wheel-ში `lsassist/memory/schema.sql` არის.
+
+Native review: **medium / reliability**, **1 CRITICAL + 3 WARNING**. CRITICAL იყო
+concurrent migration stale-version race: ორმა first-start connection-მა lock-მდე
+version 0 წაიკითხა. გასწორება lock-ის აღების შემდეგ ledger-ს თავიდან კითხულობს;
+deterministic two-connection test waiter-ს idempotent no-op-ად ამტკიცებს.
+Correction იყო **45 ხაზი**, forecast 60, frozen budget 200; scoped validator =
+**PASS**.
+
+სამი დარჩენილი WARNING:
+
+1. newer-version refusal WAL negotiation-ის შემდეგ ხდება და refusal-მდე შეიძლება
+   WAL/SHM sidecar-ები შექმნას;
+2. broad `sqlite3.DatabaseError` operational failure-ს შეიძლება corruption-ის
+   სახელით წარმოაჩენდეს;
+3. ერთსა და იმავე missing parent component-ის concurrent creation-მა SQLite-ის
+   გახსნამდე შეიძლება `FileExistsError` გაატაროს.
+
+⚠️ **RECEIPT: NOT APPROVED.** `gentle-ai 2.2.4` corrected target-ზე captured
+verification evidence-ს ვერ აბამს. Maintainer-მა დაადასტურა
+`explicit-maintainer-action`; approval არ მოგვიგონია. სრული lineage ინახება
+`.git/gentle-ai/quarantine-manual/review-6710ab6c47fc08a3`-ში.
 
 ### FEATURE FREEZE — TCB LOC 6020 / 6000
 
@@ -159,15 +206,24 @@ primitive გადავიდოდა 100%-იანი იატაკიდ
 `tcb-loc-manifest.txt`-ის **საკუთარი residual 3-ია**. სწორი გზა: ცალკე task,
 რომელიც **ჯერ** `config`-ს იატაკს ქვეშ შეიყვანს — ჩემი თანხმობით.
 
-## 4. შემდეგი საქმე
+## 4. შემდეგი საქმე — T3.06
 
-**T3.05 დაფარულია** (`a9293d4`). Frontier თვითონ გამოთვალე `Depends on` გრაფის
-ტრანზიტული ჩაკეტვით — ⚠️ ამ ledger-ის frontier-ის ხაზი ერთხელ უკვე ტყუოდა,
-რადგან მხოლოდ პირველი დამოკიდებულება წავიკითხე.
+**T3.05 (`a9293d4`) და T4.07 (`2753917`) ორივე დაფარულია, ამიტომ T3.06 ახლა
+ნამდვილად განბლოკილია.** ეს არის შემდეგი deepest-chain work unit: `test.run`,
+`proc.exec`, `net.fetch`; `net.fetch` body მხოლოდ T4.07 memory store-ში მიდის და
+არა disk-ზე. ჯერ grounding, მერე RED:
+
+```bash
+cd /home/null/Desktop/LinuxSec/lsassist
+V=~/.local/share/lsassist/venv/bin
+$V/python -m pytest tests/unit/tools/test_exec_net_tools.py -q
+$V/python -m pytest tests/integration/tools/test_exec_net_sandbox.py -q -m integration
+```
 
 გახსნილი კანდიდატები: **T4.03** (audit reader), **T4.05** (rollback flow —
 T4.04-ს ეყრდნობა და მისი პირდაპირი გაგრძელებაა), **T3.09/T3.11** (provider
-adapters). **T3.06** ითხოვს T3.05-ს **და** T4.07-ს.
+adapters). **T4.08-ც ღიაა** და memory retrieval-ის პირდაპირი გაგრძელებაა, მაგრამ
+ჯერ T3.06 აიღე, რადგან ის T3.07-ს და უფრო ღრმა execution chain-ს ხსნის.
 
 ⚠️ **T3.05-ის ორი residual, რომლებიც შემდეგმა task-მა უნდა იცოდეს:**
 - checkpoint-ის აღდგენადობა და „workspace-ის `.git` ხელუხლებელია" მხოლოდ
@@ -277,5 +333,5 @@ adapters). **T3.06** ითხოვს T3.05-ს **და** T4.07-ს.
 
 ---
 
-დაიწყე §1-ის გაზომვით. მერე §3-ის ორ გადაწყვეტილებაზე მკითხე, და §4 — **T3.05**.
+დაიწყე §1-ის გაზომვით. თუ baseline ზუსტად ემთხვევა, გააგრძელე §4 — **T3.06**.
 `gentle-ai` სრულფასოვნად, ყოველ candidate-ზე, §0.1-ის ხაფანგის ცოდნით.

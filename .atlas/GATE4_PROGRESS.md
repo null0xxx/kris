@@ -15,7 +15,90 @@
 - **Gate:** 4 (implementation) — IN PROGRESS
 - **Source of truth for tasks:** `../IMPLEMENTATION_PLAN.md` (70 tasks, 6 phases)
 - **Repo:** `../lsassist` (branch `main`)
-- **Last updated:** 2026-07-28
+- **Last updated:** 2026-08-09
+
+---
+
+## CURRENT TRUTH — T4.07 landed at `2753917`
+
+`main` was **15 commits ahead of `origin/main`** immediately after the T4.07
+commit and before this documentation edit. Nothing has been pushed; **do not
+push unless the maintainer asks separately**.
+
+T4.07 implements the SQLite memory-store foundation from SPEC §10.2/§12.1/§14.5:
+the verbatim schema plus `schema_migrations`, WAL and foreign-key startup
+settings, ordered transactional migrations, a fail-closed newer-version guard,
+0600 creation, startup integrity checking, and actionable corruption recovery
+guidance. `schema.sql` is declared as package data, and wheel inspection proved
+that `lsassist/memory/schema.sql` is present in the non-editable wheel.
+
+The Linux path boundary is descriptor-anchored rather than path-string based.
+Parent components are opened with `openat`/`O_NOFOLLOW`; SQLite is then opened
+through pinned parent and database descriptors so an ancestor or leaf symlink
+swap cannot redirect the database, WAL, or SHM files. Two issues were fixed
+before native review started: `schema.sql` was missing from wheel package data,
+and the first path design did not make both ancestor and leaf symlink authority
+descriptor-stable.
+
+### Exact T4.07 work unit
+
+- `lsassist/pyproject.toml` — ships `memory/schema.sql` as package data.
+- `lsassist/src/lsassist/memory/__init__.py` — public store API and errors.
+- `lsassist/src/lsassist/memory/schema.sql` — §10.2 DDL.
+- `lsassist/src/lsassist/memory/migrations.py` — versioned transactional runner.
+- `lsassist/src/lsassist/memory/store.py` — secure open, pragmas, permissions,
+  integrity check, and pinned-descriptor lifetime.
+- `lsassist/tests/unit/memory/{__init__.py,test_migrations.py,test_store.py}` —
+  35 focused tests, including real WAL/SHM, wheel, concurrency, and deterministic
+  ancestor/leaf-swap boundaries.
+
+### Verification and native review authority
+
+| Check | Corrected committed tree |
+|---|---|
+| focused memory suite | **35 passed** |
+| full pytest | **3071 passed, 0 failed** |
+| Ruff / mypy | clean; gated strict set 49 files, memory package clean |
+| §23.1 / dispatcher+result coverage | **100%, 0 partial** on both gates |
+| TCB LOC | **6020 / 6000**, unchanged; hard stop 8000 |
+| package build | wheel contains `lsassist/memory/schema.sql` |
+
+Native review classified the candidate **medium risk** and selected the
+**reliability** lens. It returned **1 CRITICAL + 3 WARNINGs**. The CRITICAL was a
+real concurrent-first-start race: two connections could both read schema version
+zero before either owned the migration lock. The fix re-reads the version ledger
+after `BEGIN IMMEDIATE`; a deterministic two-connection test proves the waiter is
+an idempotent no-op. The bounded correction used **45 lines**, under forecast 60
+and the frozen 200-line budget, and the independent scoped validator returned
+**PASS**.
+
+The three WARNING residuals remain named, not hidden:
+
+1. Refusing a newer schema version happens after WAL negotiation, so unsupported
+   databases can gain WAL/SHM sidecars before refusal.
+2. Broad `sqlite3.DatabaseError` handling can mislabel operational failures as
+   corruption.
+3. Concurrent creation of the same missing parent component can leak
+   `FileExistsError` before SQLite opens.
+
+**RECEIPT: NOT APPROVED.** `gentle-ai 2.2.4` hit its correction-evidence binding
+dead end after the validator PASS and could not bind captured verification to the
+corrected target. The maintainer explicitly authorized
+`explicit-maintainer-action`; the pre-commit gate itself returned
+`result=invalidated`, `allowed=false`, and that action. No approval was invented.
+The complete lineage is quarantined, not deleted, at
+`.git/gentle-ai/quarantine-manual/review-6710ab6c47fc08a3`.
+
+### Recomputed completion and frontier
+
+Artifact-existence measurement now yields **33 / 70 = 47.1%**. Phase 4 is
+**4 / 12 = 33.3%**. The phase totals are 10/11, 13/13, 6/14, 4/12, 0/14, and
+0/6. This is one lower than a tempting 34/70 count: T3.05's files were already
+present and counted in the 32/70 artifact snapshot while that task was still
+uncommitted, so landing its commit did not create another built task. T4.07 adds
+exactly one. Because T3.05 and T4.07 are both landed, **T3.06 is now unblocked**;
+it is the next deepest-chain work unit. **T4.08 is also open** and is the direct
+memory retrieval continuation.
 
 ---
 
@@ -967,7 +1050,7 @@ keep such lines minimal and name them in the commit.
 
 ---
 
-## 📊 Measured completion — 32 / 70 = 45.7%, 2026-07-30
+## 📊 Measured completion — 33 / 70 = 47.1%, 2026-08-09
 
 **Measured by ARTIFACT EXISTENCE, not by commit-message archaeology.** A `Tx.yy:`
 grep over `git log` UNDERCOUNTS badly (24/70) because many tasks landed under other
@@ -985,20 +1068,24 @@ message shapes. The reproducible method:
 | 1 | 10/11 | `██████████████████████░░` | 90.9% |
 | 2 | 13/13 | `████████████████████████` | **100%** |
 | 3 | 6/14 | `██████████░░░░░░░░░░░░░░` | 42.9% |
-| 4 | 3/12 | `██████░░░░░░░░░░░░░░░░░░` | 25.0% |
+| 4 | 4/12 | `████████░░░░░░░░░░░░░░░░` | 33.3% |
 | 5 | 0/14 | `░░░░░░░░░░░░░░░░░░░░░░░░` | **0%** |
 | 6 | 0/6 | `░░░░░░░░░░░░░░░░░░░░░░░░` | **0%** |
 
-31 tasks not started. Partial: T4.07 1/5, T4.10 1/7, T5.01 2/8, T5.05 1/8,
-T5.08 1/7, T6.06 1/2.
+37 tasks remain incomplete. Partial artifact traces do not count as built tasks:
+T4.10 1/8, T5.01 2/8, T5.05 1/8, T5.08 1/7, and T6.06 1/4.
 
-⚠️ **45.7% of tasks, 0% of a usable program.** `lsassist` still does not run. Phase
+⚠️ **47.1% of tasks, 0% of a usable program.** `lsassist` still does not run. Phase
 5 — CLI, session engine, coding and tutor modes — is untouched, and nothing in
 `src/` wires the T3.04/T3.05 handlers or the T4.04 store. The assembly point is
 **T5.12**. Task percentage is not progress toward a working tool, and this ledger
 should never imply that it is.
 
-## 🚧 T3.05 — GREEN on disk, UNCOMMITTED, review found TWO CRITICALs
+## 📜 HISTORICAL: T3.05 pre-commit review found TWO CRITICALs
+
+> This section preserves the pre-commit audit trail only. T3.05 subsequently
+> landed at `a9293d4`; the authoritative final state is the `T3.05 LANDED`
+> section below. Do not resume work from this historical snapshot.
 
 Built: three §6.4 manifests, three handlers, four new reason codes
 (`WRITE_FAILED`, `TARGET_EXISTS`, `ANCHOR_MISS`, `CHECKPOINT_FAILED`), two test
