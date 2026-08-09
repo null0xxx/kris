@@ -37,6 +37,7 @@ where = ["src"]
 # and a bare `*.json` glob does not recurse into it. T3.04 populates it.
 [tool.setuptools.package-data]
 "lsassist.tools" = ["*.json", "manifests/*.json"]
+"lsassist.memory" = ["schema.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
