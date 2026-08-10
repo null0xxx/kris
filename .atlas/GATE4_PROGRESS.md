@@ -19,42 +19,42 @@
 
 ---
 
-## CURRENT TRUTH — T3.06 landed at `6729b4e`
+## CURRENT TRUTH — T3.07 landed at `2d0f6c2`
 
-T3.06 is committed on `main` as `6729b4e` (`feat(tools): implement T3.06 exec
-and network tools`). It adds the frozen `test.run`, `proc.exec`, and `net.fetch`
-tool batch, including the RAM-only fetch body store, manifests, dispatcher/policy
-bindings, real sandbox/network integration tests, and dedicated coverage gates.
-Nothing has been pushed; push only when the maintainer asks separately.
+T3.07 is committed on `main` as `2d0f6c2` (`test(tools): add T3.07 registry
+contract`). It adds the frozen registry-enumeration contract without production
+or TCB changes. T3.06 remains the source of the exec/network architecture
+summarized below. Nothing has been pushed; push only when the maintainer asks.
 
-### Security architecture that landed
+### Contract and security authority that landed
 
 | Boundary | Landed authority |
 |---|---|
-| `test.run` | Detects exactly one supported runner and binds the final argv into approval authority before sandbox execution. |
-| `proc.exec` | Requires an immutable exact absolute-path allowlist. Approval also binds `(realpath, device, inode, size, ctime_ns)`, and the dispatcher rechecks it before composing the sandbox argv. |
-| filesystem path binding | Only the genuinely pathless `test.run` and `proc.exec` tools may omit `path_args`; `git.worktree` remains fail-closed on missing path declarations. |
-| `net.fetch` policy | `PolicyStores.net_allowlist` is the single runtime and policy authority. Redirects preserve the approved scheme and effective port. |
-| fetch deadline/storage | HTTP runs through `AsyncClient` under an absolute total timeout. The synchronous handler is safe when its caller already owns an event loop, and body storage occurs only after bounded completion in the caller. |
-| response scope | GET/HEAD only; `text/*`, exact `application/json`, and exact `application/xml`; 1 MiB cap; bodies remain in RAM. |
+| registry identity | Exact bidirectional set of the twelve V1 names. |
+| manifest authority | Every approved name is also bound to its exact `permission_class` and `fs/net/proc` capability tuple. |
+| absent families | Shell, privileged/package/destructive-Git, service, firewall, credential, send, and cron families remain explicitly absent. |
+| schema typing | Recursive checks cover object, array, union, applicator, conditional, definition, dynamic, and content-schema positions. References fail closed. |
+| shell carriers | Exact and compound shell carriers are rejected without falsely rejecting the legitimate `subcommand` field. |
+| T3.06 runtime boundaries | Runner argv, executable identity, redirect authority, absolute fetch deadline, MIME scope, and caller-side RAM storage remain unchanged. |
 
 ### Final verification and native authority
 
-| Check | Committed T3.06 tree |
+| Check | Committed T3.07 tree |
 |---|---|
-| full pytest | **3191 passed** |
+| full pytest | **3285 passed** |
 | §23.1 TCB coverage | **100%** |
 | dispatcher + result coverage | **100%** |
 | T3.06 handler coverage | **100%** |
-| mutation campaign | **18 / 18 killed**, with substitution-applied proof |
+| T3.07 exhaustive schema/authority mutations | **27 / 27 killed** |
+| T3.07 grounded catalog mutations | **3 / 3 killed** |
 | Ruff / mypy | clean |
-| TCB LOC | **6031 / 6000**; feature freeze active; hard stop **8000** |
+| TCB LOC | **6031 / 6000**; **delta 0**; feature freeze active; hard stop **8000** |
 
-Gentle AI reviewed the immutable candidate at high risk with all four lenses.
-Lineage `review-22c0be57fd5434eb` admitted seven severe IDs representing five root
-causes. The single bounded correction used 194 changed lines, passed independent
-validation and final evidence, and produced an approved receipt. The native
-`pre-commit` gate returned **allow** for that receipt before commit `6729b4e`.
+Gentle AI reviewed the immutable T3.07 candidate at high risk with all four
+lenses. Lineage `review-4f7cd8abf4344ccc` admitted five severe IDs, resolved in
+one bounded correction. Independent validation, final evidence, and the terminal
+receipt are approved; the native `pre-commit` gate returned **allow** before
+commit `2d0f6c2`.
 
 ### Named security residuals
 
@@ -72,23 +72,19 @@ remains 8000.** Do not relax either number or hide the warning.
 
 ### Recomputed completion and frontier
 
-Artifact-existence measurement now yields **34 / 70 = 48.6%**. Phase totals are
-**10/11, 13/13, 7/14, 4/12, 0/14, 0/6**. T3.06 adds exactly one Phase-3 task to
-the previously measured 33/70 state.
+Artifact-existence measurement now yields **35 / 70 = 50.0%**. Phase totals are
+**10/11, 13/13, 8/14, 4/12, 0/14, 0/6**. T3.07 adds exactly one Phase-3 task to
+the previously measured 34/70 state.
 
-**Next recommended frozen task: T3.07.** Direct evidence:
+**Next recommended frozen task: T3.09.** Direct evidence:
 
-- `IMPLEMENTATION_PLAN.md` states that T3.07 depends on T3.06 only.
-- T3.06 is landed at `6729b4e`.
-- T3.07's sole planned artifact,
-  `lsassist/tests/contract/tools/test_registry_enumeration.py`, is absent.
-- The frozen task is a contract-only exact-enumeration guard for the twelve V1
-  tools and explicitly absent privileged/shell-like tools; it requires no
-  production implementation.
-
-Other dependency-ready work may exist, but T3.07 is the immediate frozen
-successor unlocked by this commit and is therefore the recommended next work
-unit.
+- `IMPLEMENTATION_PLAN.md` states that T3.09 depends only on T3.08.
+- T3.08's `src/lsassist/providers/base.py` artifact exists and the progress
+  ledger records T3.08 as GREEN in the landed Phase-3/4 Wave 1.
+- All four frozen T3.09 artifacts are absent: `providers/kimi_coding.py`,
+  `test_kimi_sse.py`, `test_kimi_errors.py`, and `test_kimi_identity.py`.
+- T3.09 is therefore dependency-ready and is the next unbuilt task in the
+  frozen Phase-3 sequence after the already-landed T3.08.
 
 ---
 
@@ -1041,7 +1037,7 @@ keep such lines minimal and name them in the commit.
 
 ---
 
-## 📊 Measured completion — 34 / 70 = 48.6%, 2026-08-10
+## 📊 Measured completion — 35 / 70 = 50.0%, 2026-08-10
 
 Measured by artifact existence, not commit-message matching. Preserve the
 reproducible method: expand every frozen task's `**Files:**` paths, then test the
@@ -1052,13 +1048,13 @@ three path roots used by the plan. Do not use `lstrip("./")`, which corrupts
 |---|---:|---:|
 | 1 | 10/11 | 90.9% |
 | 2 | 13/13 | 100% |
-| 3 | 7/14 | 50.0% |
+| 3 | 8/14 | 57.1% |
 | 4 | 4/12 | 33.3% |
 | 5 | 0/14 | 0% |
 | 6 | 0/6 | 0% |
 
-**36 tasks remain.** Partial artifact traces still do not count as built tasks.
-The 48.6% figure measures completed plan tasks, not a usable application: Phase 5
+**35 tasks remain.** Partial artifact traces still do not count as built tasks.
+The 50.0% figure measures completed plan tasks, not a usable application: Phase 5
 still owns CLI/session assembly, with T5.12 as the integration point.
 
 ## 📜 HISTORICAL: T3.05 pre-commit review found TWO CRITICALs
@@ -1211,6 +1207,17 @@ security residuals are the narrow stat-to-exec pathname race and the possibility
 that an uncooperative transport worker outlives its timed-out caller; that worker
 cannot subsequently store a body.
 
-The immediate frozen successor is **T3.07** because its only dependency is T3.06,
-which is now landed, while its sole artifact
-`lsassist/tests/contract/tools/test_registry_enumeration.py` is still absent.
+## ✅ T3.07 LANDED — `2d0f6c2`, 2026-08-10
+
+The registry contract landed with no production or TCB change. The approved
+lineage is `review-4f7cd8abf4344ccc`; its terminal receipt is approved, final
+evidence passed, and native pre-commit validation returned allow.
+
+Final evidence: **3285 tests**, all three coverage gates at **100%**, Ruff and
+mypy clean, **27/27 exhaustive schema/authority mutations killed**, and **3/3
+grounded catalog mutations killed**. TCB LOC remains **6031 / 6000**, delta 0,
+with feature freeze active and hard stop 8000.
+
+The immediate recommended frozen task is **T3.09**. The plan states that it
+depends only on T3.08; T3.08's base provider artifact is present and recorded
+GREEN, while all four T3.09 Kimi adapter/test artifacts are absent.

@@ -2,7 +2,7 @@
 
 > Open the next session at `/home/null/Desktop/LinuxSec`, the Git root, and paste
 > everything below the separator as one message. This handoff was updated on
-> 2026-08-10 after T3.06 landed at `6729b4e`.
+> 2026-08-10 after T3.07 landed at `2d0f6c2`.
 
 ---
 
@@ -16,8 +16,8 @@ set -euo pipefail
 cd /home/null/Desktop/LinuxSec
 git log --oneline -4
 git status --short
-git diff --quiet 6729b4e -- .github lsassist || {
-  echo "STOP: source/workflow bytes differ from approved T3.06 commit 6729b4e" >&2
+git diff --quiet 2d0f6c2 -- .github lsassist || {
+  echo "STOP: source/workflow bytes differ from approved T3.07 commit 2d0f6c2" >&2
   exit 1
 }
 untracked="$(git ls-files --others --exclude-standard -- .github lsassist)" || {
@@ -53,7 +53,7 @@ $V/python -m coverage run --branch \
 
 cd ..
 gentle-ai review status --cwd /home/null/Desktop/LinuxSec | jq -e \
-  '[.entries[] | select(.lineage_id == "review-22c0be57fd5434eb")] |
+  '[.entries[] | select(.lineage_id == "review-4f7cd8abf4344ccc")] |
    length == 1 and .[0].state == "approved" and .[0].status == "approved"' >/dev/null
 ```
 
@@ -61,30 +61,35 @@ Expected committed baseline:
 
 | Check | Expected result |
 |---|---|
-| HEAD | `6729b4e` or a later documentation-only commit |
-| full pytest | **3191 passed** |
+| HEAD | `2d0f6c2` or a later documentation-only commit |
+| full pytest | **3285 passed** |
 | Ruff / mypy | clean |
 | §23.1 TCB coverage | **100%** |
 | dispatcher + result coverage | **100%** |
 | T3.06 handler coverage | **100%** |
-| T3.06 mutations | **18 / 18 killed** |
-| TCB LOC | **6031 / 6000**, feature freeze active; hard stop **8000** |
+| T3.07 exhaustive mutations | **27 / 27 killed** |
+| T3.07 grounded catalog mutations | **3 / 3 killed** |
+| TCB LOC | **6031 / 6000**, T3.07 delta 0; feature freeze active; hard stop **8000** |
 
-The three coverage commands are fresh gates. The **18/18 mutation result is
-immutable reviewed historical evidence**, not a replay claim: no durable mutation
-script shipped. The final receipt binds that evidence to lineage
-`review-22c0be57fd5434eb` and the approved T3.06 candidate. Proceed to T3.07 only
-if the native status pipeline exits zero and confirms **approved** for that lineage.
-If HEAD is not `6729b4e` or a documentation-only descendant, source bytes differ,
-any fresh gate fails, or receipt validation fails, stop and report the discrepancy.
+The three coverage commands are fresh gates. The **27/27** and **3/3** mutation
+results are immutable reviewed historical evidence, not replay claims. The final
+receipt binds that evidence to lineage `review-4f7cd8abf4344ccc` and the approved
+T3.07 candidate. Proceed to T3.09 only if the native status pipeline exits zero
+and confirms **approved** for that exact lineage. If HEAD is not `2d0f6c2` or a
+documentation-only descendant, source bytes differ, any fresh gate fails, or
+authority validation fails, stop and report the discrepancy.
 The virtual environment is the ADR-005 Python 3.12 environment, not a repository
 `.venv`; do not rebuild it with Python 3.14.
 
 ## 2. Current project state
 
-T3.06 landed at `6729b4e` with `test.run`, `proc.exec`, and `net.fetch`. Gentle AI
-lineage `review-22c0be57fd5434eb` is approved, final evidence passed, and native
-pre-commit validation returned allow for the committed candidate.
+T3.07 landed at `2d0f6c2` as a contract-only change. Gentle AI lineage
+`review-4f7cd8abf4344ccc` is approved, final evidence passed, and native
+pre-commit validation returned allow for the committed candidate. The contract
+freezes both the exact twelve-name catalog and every name's exact permission and
+`fs/net/proc` capability authority. Its fail-closed schema walk covers unions,
+combinators, dynamic schema positions, and references, and rejects compound shell
+carriers without rejecting `subcommand`.
 
 The important authority boundaries are:
 
@@ -113,13 +118,13 @@ the TCB. The 6000 feature freeze remains active.
 
 ## 3. Measured completion
 
-**34 / 70 tasks = 48.6%.** Phase totals are:
+**35 / 70 tasks = 50.0%.** Phase totals are:
 
 | Phase | Built |
 |---|---:|
 | 1 | 10/11 |
 | 2 | 13/13 |
-| 3 | 7/14 |
+| 3 | 8/14 |
 | 4 | 4/12 |
 | 5 | 0/14 |
 | 6 | 0/6 |
@@ -127,36 +132,37 @@ the TCB. The 6000 feature freeze remains active.
 This is task completion, not a usable-program percentage. Phase 5 still owns the
 CLI/session assembly; T5.12 is the integration point.
 
-## 4. Next recommended task — T3.07
+## 4. Next recommended task — T3.09
 
-Use the frozen T3.07 block in `IMPLEMENTATION_PLAN.md`. This recommendation is
+Use the frozen T3.09 block in `IMPLEMENTATION_PLAN.md`. This recommendation is
 based on direct evidence, not priority inference:
 
-1. The frozen plan says T3.07 depends only on T3.06.
-2. T3.06 is landed at `6729b4e`.
-3. T3.07's sole artifact,
-   `lsassist/tests/contract/tools/test_registry_enumeration.py`, is absent.
+1. The frozen plan says T3.09 depends only on T3.08.
+2. T3.08's `src/lsassist/providers/base.py` exists and the progress ledger
+   records T3.08 as GREEN in the landed Phase-3/4 Wave 1.
+3. All four T3.09 artifacts are absent: `providers/kimi_coding.py`,
+   `test_kimi_sse.py`, `test_kimi_errors.py`, and `test_kimi_identity.py`.
 
-T3.07 is contract-only. Add no production behavior. Its test must assert:
-
-- the registry contains exactly the twelve frozen V1 tools;
-- the explicitly absent shell, privileged execution, destructive Git, package
-  mutation, service, firewall, credential, send, and cron tool families remain
-  absent;
-- every manifest has a typed input schema; and
-- no manifest accepts a shell command string.
+T3.09 owns the Kimi adapter core: OpenAI-compatible request construction,
+streaming SSE parsing, strict tool definitions, the frozen provider-error mapping,
+honest User-Agent identity, and secret-safe logging. Keep provider contracts in
+T3.08's base layer; do not redefine them in the adapter.
 
 Start RED-first with the frozen command:
 
 ```bash
 cd /home/null/Desktop/LinuxSec/lsassist
 V=~/.local/share/lsassist/venv/bin
-$V/python -m pytest tests/contract/tools/test_registry_enumeration.py -q
+$V/python -m pytest \
+  tests/unit/providers/test_kimi_sse.py \
+  tests/unit/providers/test_kimi_errors.py \
+  tests/contract/providers/test_kimi_identity.py -q
 ```
 
-The initial RED is the absent contract-test file. After implementation, run the
-focused test, the relevant full gates, and the frozen mutation check that proves a
-temporary `shell` manifest makes the exact enumeration fail.
+The initial RED is the three absent test modules. After implementation, run the
+focused tests, strict mypy on `src/lsassist/providers/kimi_coding.py`, the relevant
+full gates, and grounded mutation checks for SSE framing, every error-map row,
+identity headers, and credential non-disclosure.
 
 ## 5. Non-negotiable workflow
 
@@ -173,4 +179,4 @@ temporary `shell` manifest makes the exact enumeration fail.
 - A green suite is not sufficient evidence. Assert diagnostics and authority
   bindings, and prove every mutation was actually substituted exactly once.
 
-Begin with the baseline verification in §1. If it matches, continue with T3.07.
+Begin with the baseline verification in §1. If it matches, continue with T3.09.
