@@ -15,90 +15,80 @@
 - **Gate:** 4 (implementation) — IN PROGRESS
 - **Source of truth for tasks:** `../IMPLEMENTATION_PLAN.md` (70 tasks, 6 phases)
 - **Repo:** `../lsassist` (branch `main`)
-- **Last updated:** 2026-08-09
+- **Last updated:** 2026-08-10
 
 ---
 
-## CURRENT TRUTH — T4.07 landed at `2753917`
+## CURRENT TRUTH — T3.06 landed at `6729b4e`
 
-`main` was **15 commits ahead of `origin/main`** immediately after the T4.07
-commit and before this documentation edit. Nothing has been pushed; **do not
-push unless the maintainer asks separately**.
+T3.06 is committed on `main` as `6729b4e` (`feat(tools): implement T3.06 exec
+and network tools`). It adds the frozen `test.run`, `proc.exec`, and `net.fetch`
+tool batch, including the RAM-only fetch body store, manifests, dispatcher/policy
+bindings, real sandbox/network integration tests, and dedicated coverage gates.
+Nothing has been pushed; push only when the maintainer asks separately.
 
-T4.07 implements the SQLite memory-store foundation from SPEC §10.2/§12.1/§14.5:
-the verbatim schema plus `schema_migrations`, WAL and foreign-key startup
-settings, ordered transactional migrations, a fail-closed newer-version guard,
-0600 creation, startup integrity checking, and actionable corruption recovery
-guidance. `schema.sql` is declared as package data, and wheel inspection proved
-that `lsassist/memory/schema.sql` is present in the non-editable wheel.
+### Security architecture that landed
 
-The Linux path boundary is descriptor-anchored rather than path-string based.
-Parent components are opened with `openat`/`O_NOFOLLOW`; SQLite is then opened
-through pinned parent and database descriptors so an ancestor or leaf symlink
-swap cannot redirect the database, WAL, or SHM files. Two issues were fixed
-before native review started: `schema.sql` was missing from wheel package data,
-and the first path design did not make both ancestor and leaf symlink authority
-descriptor-stable.
-
-### Exact T4.07 work unit
-
-- `lsassist/pyproject.toml` — ships `memory/schema.sql` as package data.
-- `lsassist/src/lsassist/memory/__init__.py` — public store API and errors.
-- `lsassist/src/lsassist/memory/schema.sql` — §10.2 DDL.
-- `lsassist/src/lsassist/memory/migrations.py` — versioned transactional runner.
-- `lsassist/src/lsassist/memory/store.py` — secure open, pragmas, permissions,
-  integrity check, and pinned-descriptor lifetime.
-- `lsassist/tests/unit/memory/{__init__.py,test_migrations.py,test_store.py}` —
-  35 focused tests, including real WAL/SHM, wheel, concurrency, and deterministic
-  ancestor/leaf-swap boundaries.
-
-### Verification and native review authority
-
-| Check | Corrected committed tree |
+| Boundary | Landed authority |
 |---|---|
-| focused memory suite | **35 passed** |
-| full pytest | **3071 passed, 0 failed** |
-| Ruff / mypy | clean; gated strict set 49 files, memory package clean |
-| §23.1 / dispatcher+result coverage | **100%, 0 partial** on both gates |
-| TCB LOC | **6020 / 6000**, unchanged; hard stop 8000 |
-| package build | wheel contains `lsassist/memory/schema.sql` |
+| `test.run` | Detects exactly one supported runner and binds the final argv into approval authority before sandbox execution. |
+| `proc.exec` | Requires an immutable exact absolute-path allowlist. Approval also binds `(realpath, device, inode, size, ctime_ns)`, and the dispatcher rechecks it before composing the sandbox argv. |
+| filesystem path binding | Only the genuinely pathless `test.run` and `proc.exec` tools may omit `path_args`; `git.worktree` remains fail-closed on missing path declarations. |
+| `net.fetch` policy | `PolicyStores.net_allowlist` is the single runtime and policy authority. Redirects preserve the approved scheme and effective port. |
+| fetch deadline/storage | HTTP runs through `AsyncClient` under an absolute total timeout. The synchronous handler is safe when its caller already owns an event loop, and body storage occurs only after bounded completion in the caller. |
+| response scope | GET/HEAD only; `text/*`, exact `application/json`, and exact `application/xml`; 1 MiB cap; bodies remain in RAM. |
 
-Native review classified the candidate **medium risk** and selected the
-**reliability** lens. It returned **1 CRITICAL + 3 WARNINGs**. The CRITICAL was a
-real concurrent-first-start race: two connections could both read schema version
-zero before either owned the migration lock. The fix re-reads the version ledger
-after `BEGIN IMMEDIATE`; a deterministic two-connection test proves the waiter is
-an idempotent no-op. The bounded correction used **45 lines**, under forecast 60
-and the frozen 200-line budget, and the independent scoped validator returned
-**PASS**.
+### Final verification and native authority
 
-The three WARNING residuals remain named, not hidden:
+| Check | Committed T3.06 tree |
+|---|---|
+| full pytest | **3191 passed** |
+| §23.1 TCB coverage | **100%** |
+| dispatcher + result coverage | **100%** |
+| T3.06 handler coverage | **100%** |
+| mutation campaign | **18 / 18 killed**, with substitution-applied proof |
+| Ruff / mypy | clean |
+| TCB LOC | **6031 / 6000**; feature freeze active; hard stop **8000** |
 
-1. Refusing a newer schema version happens after WAL negotiation, so unsupported
-   databases can gain WAL/SHM sidecars before refusal.
-2. Broad `sqlite3.DatabaseError` handling can mislabel operational failures as
-   corruption.
-3. Concurrent creation of the same missing parent component can leak
-   `FileExistsError` before SQLite opens.
+Gentle AI reviewed the immutable candidate at high risk with all four lenses.
+Lineage `review-22c0be57fd5434eb` admitted seven severe IDs representing five root
+causes. The single bounded correction used 194 changed lines, passed independent
+validation and final evidence, and produced an approved receipt. The native
+`pre-commit` gate returned **allow** for that receipt before commit `6729b4e`.
 
-**RECEIPT: NOT APPROVED.** `gentle-ai 2.2.4` hit its correction-evidence binding
-dead end after the validator PASS and could not bind captured verification to the
-corrected target. The maintainer explicitly authorized
-`explicit-maintainer-action`; the pre-commit gate itself returned
-`result=invalidated`, `allowed=false`, and that action. No approval was invented.
-The complete lineage is quarantined, not deleted, at
-`.git/gentle-ai/quarantine-manual/review-6710ab6c47fc08a3`.
+### Named security residuals
+
+1. **Narrow stat-to-exec race:** executable identity is bound and rechecked, but
+   execution still opens the pathname after the final stat rather than executing
+   an already-verified descriptor.
+2. **Uncooperative transport lifetime:** a transport that ignores cancellation
+   may keep its daemon worker alive after the caller receives `TIMED_OUT`. The
+   worker cannot store a body because storage exists only on the caller side
+   after successful bounded completion.
+
+The TCB increase from 6020 to 6031 is admitted security remediation, not new
+feature capacity. **Feature freeze remains active at 6000; the enforced hard stop
+remains 8000.** Do not relax either number or hide the warning.
 
 ### Recomputed completion and frontier
 
-Artifact-existence measurement now yields **33 / 70 = 47.1%**. Phase 4 is
-**4 / 12 = 33.3%**. The phase totals are 10/11, 13/13, 6/14, 4/12, 0/14, and
-0/6. This is one lower than a tempting 34/70 count: T3.05's files were already
-present and counted in the 32/70 artifact snapshot while that task was still
-uncommitted, so landing its commit did not create another built task. T4.07 adds
-exactly one. Because T3.05 and T4.07 are both landed, **T3.06 is now unblocked**;
-it is the next deepest-chain work unit. **T4.08 is also open** and is the direct
-memory retrieval continuation.
+Artifact-existence measurement now yields **34 / 70 = 48.6%**. Phase totals are
+**10/11, 13/13, 7/14, 4/12, 0/14, 0/6**. T3.06 adds exactly one Phase-3 task to
+the previously measured 33/70 state.
+
+**Next recommended frozen task: T3.07.** Direct evidence:
+
+- `IMPLEMENTATION_PLAN.md` states that T3.07 depends on T3.06 only.
+- T3.06 is landed at `6729b4e`.
+- T3.07's sole planned artifact,
+  `lsassist/tests/contract/tools/test_registry_enumeration.py`, is absent.
+- The frozen task is a contract-only exact-enumeration guard for the twelve V1
+  tools and explicitly absent privileged/shell-like tools; it requires no
+  production implementation.
+
+Other dependency-ready work may exist, but T3.07 is the immediate frozen
+successor unlocked by this commit and is therefore the recommended next work
+unit.
 
 ---
 
@@ -943,11 +933,11 @@ Both lineages are quarantined **by hand, nothing deleted**, under
 `.git/gentle-ai/quarantine-manual/` with a README recording each. **escalated ≠
 approved**, and the commit message says so.
 
-**Rule this establishes: open a `review start` only when you are prepared for the
-candidate NOT to need a correction.** In this facade version, needing one is a
-one-way door: the code improves, the receipt never materialises. A
-`correction_required` lineage also blocks every new `review start` with
-`action: blocked-scope-action`, so it must be moved aside before the next task.
+**Historical procedure only; do not carry it forward.** The T3.06 lineage later
+completed a native bounded correction, bound final evidence, produced an approved
+receipt, and passed pre-commit validation. The quarantine workaround described
+above belongs to the older failed T4.04 review transactions, not current review
+policy.
 
 A pristine lineage CAN be closed properly — `gentle-ai review abandon` with the
 exact six-line LF-only `--maintainer-authorization` binding (run `abandon` with no
@@ -956,8 +946,9 @@ Used successfully on `review-4b139fbedd5ec1ff`.
 
 ### 🚨 FEATURE FREEZE is now live — maintainer decision
 
-**TCB LOC 6020 / 6000.** SPEC.md:132 (§2.3): *"ზღვარზე გადასვლა = feature freeze,
-არა budget-ის მოშვება."* Hard stop 8000, so no gate blocks. **The count was
+**Historical T4.04 reading: TCB LOC 6020 / 6000. Current reading: 6031.**
+SPEC.md:132 (§2.3): *"ზღვარზე გადასვლა = feature freeze, არა budget-ის
+მოშვება."* Hard stop 8000, so no gate blocks. **The count was
 deliberately NOT reformatted to hide the crossing** — compressing physical lines
 to pass the counter is the same violation in reverse.
 
@@ -1050,36 +1041,25 @@ keep such lines minimal and name them in the commit.
 
 ---
 
-## 📊 Measured completion — 33 / 70 = 47.1%, 2026-08-09
+## 📊 Measured completion — 34 / 70 = 48.6%, 2026-08-10
 
-**Measured by ARTIFACT EXISTENCE, not by commit-message archaeology.** A `Tx.yy:`
-grep over `git log` UNDERCOUNTS badly (24/70) because many tasks landed under other
-message shapes. The reproducible method:
+Measured by artifact existence, not commit-message matching. Preserve the
+reproducible method: expand every frozen task's `**Files:**` paths, then test the
+three path roots used by the plan. Do not use `lstrip("./")`, which corrupts
+`.github/...` paths.
 
-1. Split `IMPLEMENTATION_PLAN.md` on `^### (T\d+\.\d+)` and take each block's
-   `**Files:**` line.
-2. Expand brace notation — the plan writes `src/lsassist/{contracts,kernel,…}/__init__.py`.
-3. Test each path against the repo root, against `lsassist/`, AND with a leading
-   `lsassist/` stripped. The plan uses all three spellings.
-4. Do **not** `lstrip("./")` — it eats the dot off `.github/workflows/ci.yml`.
+| Phase | Built | Completion |
+|---|---:|---:|
+| 1 | 10/11 | 90.9% |
+| 2 | 13/13 | 100% |
+| 3 | 7/14 | 50.0% |
+| 4 | 4/12 | 33.3% |
+| 5 | 0/14 | 0% |
+| 6 | 0/6 | 0% |
 
-| Phase | Built | | |
-|---|---|---|---|
-| 1 | 10/11 | `██████████████████████░░` | 90.9% |
-| 2 | 13/13 | `████████████████████████` | **100%** |
-| 3 | 6/14 | `██████████░░░░░░░░░░░░░░` | 42.9% |
-| 4 | 4/12 | `████████░░░░░░░░░░░░░░░░` | 33.3% |
-| 5 | 0/14 | `░░░░░░░░░░░░░░░░░░░░░░░░` | **0%** |
-| 6 | 0/6 | `░░░░░░░░░░░░░░░░░░░░░░░░` | **0%** |
-
-37 tasks remain incomplete. Partial artifact traces do not count as built tasks:
-T4.10 1/8, T5.01 2/8, T5.05 1/8, T5.08 1/7, and T6.06 1/4.
-
-⚠️ **47.1% of tasks, 0% of a usable program.** `lsassist` still does not run. Phase
-5 — CLI, session engine, coding and tutor modes — is untouched, and nothing in
-`src/` wires the T3.04/T3.05 handlers or the T4.04 store. The assembly point is
-**T5.12**. Task percentage is not progress toward a working tool, and this ledger
-should never imply that it is.
+**36 tasks remain.** Partial artifact traces still do not count as built tasks.
+The 48.6% figure measures completed plan tasks, not a usable application: Phase 5
+still owns CLI/session assembly, with T5.12 as the integration point.
 
 ## 📜 HISTORICAL: T3.05 pre-commit review found TWO CRITICALs
 
@@ -1209,3 +1189,28 @@ reported SURVIVED without ever being applied. The `count != 1` guard did not sav
 me because the script died earlier, on the path. **"Unapplied" and "survived" look
 identical in the output** — this ledger already said so, and I still hit it. Assert
 the mutation applied AND assert the harness's arity.
+
+## ✅ T3.06 LANDED — `6729b4e`, 2026-08-10
+
+The exec/network batch landed after one native bounded correction transaction.
+The approved lineage is `review-22c0be57fd5434eb`; its terminal receipt is
+approved, final evidence passed, and the native pre-commit validation returned
+allow for the committed candidate.
+
+Final evidence: **3191 tests**, **100%** §23.1 TCB coverage, **100%**
+dispatcher/result coverage, **100%** T3.06 handler coverage, Ruff and mypy clean,
+and **18/18 mutations killed** with proof that every substitution was applied.
+
+The review's seven severe IDs collapsed to five fixes: restore `git.worktree`
+path binding; bind and recheck `proc.exec` executable identity; bind redirect
+scheme/port; use `PolicyStores.net_allowlist` as the single authority; and enforce
+an absolute fetch deadline without late body storage.
+
+TCB LOC is **6031 / 6000**, with feature freeze active and hard stop 8000. The two
+security residuals are the narrow stat-to-exec pathname race and the possibility
+that an uncooperative transport worker outlives its timed-out caller; that worker
+cannot subsequently store a body.
+
+The immediate frozen successor is **T3.07** because its only dependency is T3.06,
+which is now landed, while its sole artifact
+`lsassist/tests/contract/tools/test_registry_enumeration.py` is still absent.
