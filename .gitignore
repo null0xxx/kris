@@ -4,3 +4,6 @@
 # the project — it has been showing up as untracked noise since the re-root and
 # must never be committed.
 .atl/
+
+# Local Git worktrees used to isolate feature implementation.
+/.worktrees/
