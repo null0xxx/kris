@@ -165,7 +165,7 @@
       ]
     },
     "integration": {
-      "runs-on": "ubuntu-latest",
+      "runs-on": "ubuntu-24.04",
       "timeout-minutes": 15,
       "steps": [
         {
@@ -185,12 +185,16 @@
           }
         },
         {
-          "name": "bubblewrap (the sandbox under test; without it every case skips)",
-          "run": "sudo apt-get update && sudo apt-get install -y bubblewrap"
+          "name": "bubblewrap + scoped AppArmor userns profile",
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y bubblewrap apparmor-profiles\nprofile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict\ntest -r \"$profile\"\nsudo install -m 0644 \"$profile\" /etc/apparmor.d/bwrap-userns-restrict\nsudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
         },
         {
           "name": "install (hashes enforced, ADR-005)",
           "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
+        },
+        {
+          "name": "Bubblewrap functional probe (SPEC \u00a78.3, I11)",
+          "run": ".venv/bin/python -c 'from lsassist.sandbox import probe; receipt = probe(); print(f\"functional bwrap probe OK: {receipt.version}\")'"
         },
         {
           "name": "sandbox boundary tests that must SPAWN (SPEC \u00a78.3, I11)",
@@ -199,7 +203,7 @@
       ]
     },
     "t306-handler-coverage": {
-      "runs-on": "ubuntu-latest",
+      "runs-on": "ubuntu-24.04",
       "timeout-minutes": 15,
       "steps": [
         {
@@ -212,12 +216,16 @@
           }
         },
         {
-          "name": "bubblewrap (T3.06 real sandbox boundary)",
-          "run": "sudo apt-get update && sudo apt-get install -y bubblewrap"
+          "name": "bubblewrap + scoped AppArmor userns profile",
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y bubblewrap apparmor-profiles\nprofile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict\ntest -r \"$profile\"\nsudo install -m 0644 \"$profile\" /etc/apparmor.d/bwrap-userns-restrict\nsudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
         },
         {
           "name": "install (hashes enforced, ADR-005)",
           "run": "python -m venv .venv && .venv/bin/pip install --require-hashes -r requirements.lock -r requirements-dev.lock && .venv/bin/pip install -e . --no-deps"
+        },
+        {
+          "name": "Bubblewrap functional probe (SPEC \u00a78.3, I11)",
+          "run": ".venv/bin/python -c 'from lsassist.sandbox import probe; receipt = probe(); print(f\"functional bwrap probe OK: {receipt.version}\")'"
         },
         {
           "name": "T3.06 handlers under unit + real integration coverage",
