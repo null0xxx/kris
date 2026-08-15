@@ -740,15 +740,40 @@ def test_the_integration_job_is_bounded_and_installs_the_sandbox() -> None:
 def test_real_sandbox_jobs_load_scoped_userns_policy_and_probe() -> None:
     for name in ("integration", "t306-handler-coverage"):
         job = _jobs()[name]
-        scripts = _run_scripts(job)
-        joined = "\n".join(scripts)
         assert job["runs-on"] == "ubuntu-24.04"
-        assert "bubblewrap apparmor-profiles" in joined
-        assert "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict" in joined
-        assert "apparmor_parser -r" in joined
-        assert "from lsassist.sandbox import probe" in joined
-        assert "apparmor_restrict_unprivileged_userns=0" not in joined
         assert "continue-on-error" not in job
+
+        setup_steps = [
+            step
+            for step in _steps(job)
+            if "apt-get install" in str(step.get("run", ""))
+        ]
+        assert len(setup_steps) == 1, f"{name} must have exactly one sandbox setup step"
+        setup_step = setup_steps[0]
+        assert "continue-on-error" not in setup_step, f"{name} sandbox setup is non-blocking"
+        setup_script = str(setup_step["run"])
+        install_lines = [
+            line for line in setup_script.splitlines() if line.startswith("sudo apt-get install ")
+        ]
+        assert len(install_lines) == 1, f"{name} must have exactly one apt install transaction"
+        install_tokens = install_lines[0].split()
+        assert install_tokens[:4] == ["sudo", "apt-get", "install", "-y"]
+        packages = set(install_tokens[4:])
+        assert {"bubblewrap", "apparmor-profiles", "cargo"} <= packages, (
+            f"{name} sandbox setup is missing required packages: "
+            f"{sorted({'bubblewrap', 'apparmor-profiles', 'cargo'} - packages)}"
+        )
+        assert "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict" in setup_script
+        assert "apparmor_parser -r" in setup_script
+        assert "apparmor_restrict_unprivileged_userns=0" not in setup_script
+
+        probe_steps = [
+            step
+            for step in _steps(job)
+            if "from lsassist.sandbox import probe" in str(step.get("run", ""))
+        ]
+        assert len(probe_steps) == 1, f"{name} must have exactly one sandbox probe step"
+        assert "continue-on-error" not in probe_steps[0], f"{name} sandbox probe is non-blocking"
 
 
 def test_coverage_job_report_does_not_override_fail_under() -> None:
