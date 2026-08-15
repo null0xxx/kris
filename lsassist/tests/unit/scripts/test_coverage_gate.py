@@ -737,6 +737,20 @@ def test_the_integration_job_is_bounded_and_installs_the_sandbox() -> None:
     assert int(job["timeout-minutes"]) <= 30
 
 
+def test_real_sandbox_jobs_load_scoped_userns_policy_and_probe() -> None:
+    for name in ("integration", "t306-handler-coverage"):
+        job = _jobs()[name]
+        scripts = _run_scripts(job)
+        joined = "\n".join(scripts)
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert "bubblewrap apparmor-profiles" in joined
+        assert "/usr/share/apparmor/extra-profiles/bwrap-userns-restrict" in joined
+        assert "apparmor_parser -r" in joined
+        assert "from lsassist.sandbox import probe" in joined
+        assert "apparmor_restrict_unprivileged_userns=0" not in joined
+        assert "continue-on-error" not in job
+
+
 def test_coverage_job_report_does_not_override_fail_under() -> None:
     """``--fail-under`` on the CLI beats the config; if it is there it must be 100."""
     script = _step_containing(_coverage_job(), "coverage report")
