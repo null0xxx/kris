@@ -32,6 +32,7 @@ import shutil
 import time
 import uuid
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -200,6 +201,41 @@ def find(
     return find_files(context)
 
 
+def model_reused_ids_with_stale_ctime(
+    context: HandlerContext,
+    current: Path,
+    *,
+    parent: bool,
+) -> None:
+    """Model the recycled-inode collision DETERMINISTICALLY.
+
+    A real unlink+recreate MAY reuse the freed inode number — depending on the
+    host allocator, the filesystem, and timing — so the swap tests below cannot
+    rely on reuse happening. This helper rewrites the approval snapshot so its
+    ``(dev, ino)`` equal the REPLACEMENT's while the approval ``ctime_ns`` stays
+    stale (one tick behind): exactly the state a reused-inode swap produces, on
+    every filesystem. A handler comparing only ``(dev, ino)`` then sees a match
+    and serves the attacker's object; a three-field identity refuses.
+    """
+    snapshot = context.normalized.path_snapshots[0]
+    info = current.stat()
+    if parent:
+        replacement = replace(
+            snapshot,
+            parent_dev=info.st_dev,
+            parent_ino=info.st_ino,
+            parent_ctime_ns=info.st_ctime_ns - 1,
+        )
+    else:
+        replacement = replace(
+            snapshot,
+            node_dev=info.st_dev,
+            node_ino=info.st_ino,
+            node_ctime_ns=info.st_ctime_ns - 1,
+        )
+    object.__setattr__(context.normalized, "path_snapshots", (replacement,))
+
+
 # ==========================================================================
 # A. fs.read — §6.4 rendering
 # ==========================================================================
@@ -305,6 +341,10 @@ def test_a_same_path_swap_after_approval_is_refused(
     context = context_for(environment, target)
     target.unlink()
     target.write_text("ATTACKER\n", encoding="utf-8")
+    # Make the collision explicit: approved (dev, ino) == the replacement's,
+    # with only the approval ctime stale — the reused-inode case, modelled
+    # deterministically instead of hoped for from the host allocator.
+    model_reused_ids_with_stale_ctime(context, target, parent=False)
 
     with pytest.raises(HandlerRefused) as excinfo:
         read_file(context)
@@ -325,6 +365,11 @@ def test_a_swapped_PARENT_directory_is_refused(
     shutil.rmtree(sub)
     sub.mkdir()
     (sub / "f.txt").write_text("ATTACKER\n", encoding="utf-8")
+    # Both halves of the collision, modelled deterministically: the approved
+    # PARENT identity matches the replacement directory, and the approved NODE
+    # identity matches the replacement file — each with a stale approval ctime.
+    model_reused_ids_with_stale_ctime(context, sub, parent=True)
+    model_reused_ids_with_stale_ctime(context, target, parent=False)
 
     with pytest.raises(HandlerRefused) as excinfo:
         read_file(context)
@@ -866,6 +911,9 @@ def test_a_swapped_root_directory_is_refused_by_fs_list(
     shutil.rmtree(root)
     root.mkdir()
     (root / "planted.txt").write_text("x\n", encoding="utf-8")
+    # Approved (dev, ino) == the replacement root's, ctime stale: the reused-
+    # inode collision, deterministic on every filesystem.
+    model_reused_ids_with_stale_ctime(context, root, parent=False)
 
     with pytest.raises(HandlerRefused) as excinfo:
         list_dir(context)
@@ -1804,6 +1852,8 @@ def test_fs_find_refuses_a_swapped_root_directory(
     shutil.rmtree(root)
     root.mkdir()
     (root / "planted.txt").write_text("x\n", encoding="utf-8")
+    # Same deterministic reused-inode collision as the fs.list case above.
+    model_reused_ids_with_stale_ctime(context, root, parent=False)
     with pytest.raises(HandlerRefused) as excinfo:
         find_files(context)
     assert excinfo.value.kind == TARGET_REPLACED

@@ -160,8 +160,14 @@ def listdir_checked(fd: int, label: str) -> list[str]:
         raise HandlerRefused(READ_FAILED, f"cannot list {label!r}: {exc!r}") from exc
 
 
-def approved_identity(context: HandlerContext, target: str) -> tuple[int, int, int, int]:
-    """``(parent_dev, parent_ino, node_dev, node_ino)`` captured at approval time.
+def approved_identity(
+    context: HandlerContext, target: str
+) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """The ``(parent_identity, node_identity)`` captured at approval time.
+
+    Each identity is a ``(st_dev, st_ino, st_ctime_ns)`` triple: the ctime is
+    what makes an inode-number-reusing recreate visible, so the two stay
+    grouped rather than spread across a fragile flat scalar sequence.
 
     A missing snapshot is a REFUSAL, not a skipped check: the pin is the only
     thing standing between this call and a same-path swap, so "no baseline" must
@@ -170,10 +176,8 @@ def approved_identity(context: HandlerContext, target: str) -> tuple[int, int, i
     for snapshot in context.normalized.path_snapshots:
         if snapshot.canonical_path == target:
             return (
-                snapshot.parent_dev,
-                snapshot.parent_ino,
-                snapshot.node_dev,
-                snapshot.node_ino,
+                (snapshot.parent_dev, snapshot.parent_ino, snapshot.parent_ctime_ns),
+                (snapshot.node_dev, snapshot.node_ino, snapshot.node_ctime_ns),
             )
     raise HandlerRefused(
         TARGET_REPLACED,
@@ -181,13 +185,14 @@ def approved_identity(context: HandlerContext, target: str) -> tuple[int, int, i
     )
 
 
-def verify_node(fd: int, want_dev: int, want_ino: int, target: str) -> os.stat_result:
+def verify_node(fd: int, want_node: tuple[int, int, int], target: str) -> os.stat_result:
     """§7.5 step 6: the object behind ``fd`` is the object approval measured."""
     info = os.fstat(fd)
-    if (info.st_dev, info.st_ino) != (want_dev, want_ino):
+    if (info.st_dev, info.st_ino, info.st_ctime_ns) != want_node:
         raise HandlerRefused(
             TARGET_REPLACED,
-            f"{target!r} is inode {info.st_ino} but was approved as {want_ino}",
+            f"{target!r} has identity {(info.st_dev, info.st_ino, info.st_ctime_ns)}"
+            f" but was approved as {want_node}",
         )
     return info
 
@@ -205,16 +210,14 @@ def open_pinned_dir(context: HandlerContext, target: str) -> int:
     name = os.path.basename(target)
     if not parent or not name:
         raise HandlerRefused(READ_FAILED, f"{target!r} has no parent/name to open against")
-    want_parent_dev, want_parent_ino, want_node_dev, want_node_ino = approved_identity(
-        context, target
-    )
+    want_parent, want_node = approved_identity(context, target)
     try:
         parent_fd = os.open(parent, DIR_FLAGS)
     except OSError as exc:
         raise HandlerRefused(READ_FAILED, f"cannot open parent of {target!r}: {exc!r}") from exc
     try:
         parent_info = os.fstat(parent_fd)
-        if (parent_info.st_dev, parent_info.st_ino) != (want_parent_dev, want_parent_ino):
+        if (parent_info.st_dev, parent_info.st_ino, parent_info.st_ctime_ns) != want_parent:
             raise HandlerRefused(
                 TARGET_REPLACED,
                 f"parent of {target!r} was swapped between approval and open",
@@ -226,7 +229,7 @@ def open_pinned_dir(context: HandlerContext, target: str) -> int:
     finally:
         os.close(parent_fd)
     try:
-        info = verify_node(fd, want_node_dev, want_node_ino, target)
+        info = verify_node(fd, want_node, target)
         if not stat_module.S_ISDIR(info.st_mode):
             raise HandlerRefused(READ_FAILED, f"{target!r} is not a directory")
     except HandlerRefused:

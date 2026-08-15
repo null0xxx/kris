@@ -5,7 +5,9 @@ Two test surfaces, per the design:
 - REAL fs-mutation cases drive :class:`OsFsView` over ``tmp_path`` (the §7.5 I/O
   boundary): approve→snapshot a real file, then mutate the tree and assert the
   four I6 invalidation vectors (retarget / parent swap / node replace via
-  rename-over / dangling) plus VALID-on-in-place-content-change.
+  rename-over / dangling) plus NODE_REPLACED-on-in-place-content-change (an
+  in-place write bumps the node ``st_ctime_ns`` — a material change now
+  invalidates the approval, per I6).
 - PURE-logic cases drive :func:`recheck` / :func:`snapshot_paths` over a
   hand-written fake :class:`FsView` (no real I/O) to pin first-failure ORDER
   (both within one snapshot and across a sequence) deterministically.
@@ -44,8 +46,8 @@ from lsassist.policy.recheck import (
 class _FakeEntry:
     exists: bool
     realpath: str
-    parent: tuple[int, int]
-    node: tuple[int, int]
+    parent: tuple[int, int, int]  # dev, ino, ctime_ns
+    node: tuple[int, int, int]
 
 
 class FakeFsView:
@@ -57,23 +59,27 @@ class FakeFsView:
     def realpath(self, path: str) -> str:
         return self._entries[path].realpath
 
-    def parent_ids(self, path: str) -> tuple[int, int]:
+    def parent_ids(self, path: str) -> tuple[int, int, int]:
         return self._entries[path].parent
 
-    def node_ids(self, path: str) -> tuple[int, int]:
+    def node_ids(self, path: str) -> tuple[int, int, int]:
         return self._entries[path].node
 
     def exists(self, path: str) -> bool:
         return self._entries[path].exists
 
 
-def _snap(path: str, parent: tuple[int, int], node: tuple[int, int]) -> PathSnapshot:
+def _snap(
+    path: str, parent: tuple[int, int, int], node: tuple[int, int, int]
+) -> PathSnapshot:
     return PathSnapshot(
         canonical_path=path,
         parent_dev=parent[0],
         parent_ino=parent[1],
+        parent_ctime_ns=parent[2],
         node_dev=node[0],
         node_ino=node[1],
+        node_ctime_ns=node[2],
     )
 
 
@@ -128,7 +134,7 @@ def test_recheck_node_replaced_on_atomic_rename_over(tmp_path: Path) -> None:
     # file of the same name in the same parent (write `.new` + `os.rename` over
     # -> NEW inode; realpath + parent (dev,ino) both unchanged). For READ/EXEC
     # tools there is NO downstream backstop (step-6 is write-only, SPEC:564), so
-    # recheck MUST catch it here via node identity.
+    # recheck MUST catch it here via the captured identities.
     target, _canonical, snapshots, fs = _approve(tmp_path)
     ino_before = os.stat(target).st_ino
     replacement = target.parent / "file.new"
@@ -136,7 +142,13 @@ def test_recheck_node_replaced_on_atomic_rename_over(tmp_path: Path) -> None:
     os.rename(replacement, target)  # atomic same-name swap
     assert os.stat(target).st_ino != ino_before  # genuinely a new inode
     assert os.path.realpath(target) == _canonical  # realpath unchanged
-    assert recheck(snapshots, fs) is RecheckVerdict.NODE_REPLACED
+    # Staging `.new` inside the parent and renaming over it MODIFIES the parent
+    # directory (a dirent is added/renamed), which bumps the parent's
+    # st_ctime_ns — so under the three-field identity the FIRST failure is the
+    # parent, and the verdict is PARENT_SWAPPED. Fail-closed either way; the
+    # NODE-only vector (same parent ctime) is pinned deterministically by the
+    # pure fake-view cases below and by the in-place-write case above.
+    assert recheck(snapshots, fs) is RecheckVerdict.PARENT_SWAPPED
 
 
 def test_recheck_dangling_on_delete(tmp_path: Path) -> None:
@@ -145,15 +157,16 @@ def test_recheck_dangling_on_delete(tmp_path: Path) -> None:
     assert recheck(snapshots, fs) is RecheckVerdict.DANGLING
 
 
-def test_recheck_valid_on_inplace_content_change_same_inode(tmp_path: Path) -> None:
+def test_recheck_rejects_inplace_content_change_same_inode(tmp_path: Path) -> None:
     target, _canonical, snapshots, fs = _approve(tmp_path)
     ino_before = os.stat(target).st_ino
-    # IN-PLACE truncate+rewrite (open("w")) keeps the SAME inode -> a content
-    # change is NOT a path-level invalidator; content integrity is the handler's
-    # job (§7.5 s4). Only a REPLACEMENT (new inode) is caught (test above).
+    # IN-PLACE truncate+rewrite (open("w")) keeps the SAME inode but bumps the
+    # node's st_ctime_ns -> a material change INVALIDATES the approval (I6) and
+    # the recheck fails closed as NODE_REPLACED. This stricter reapproval
+    # behavior is intentional: it is what closes the recycled-inode hole.
     target.write_text("COMPLETELY DIFFERENT AND LONGER CONTENT", encoding="utf-8")
     assert os.stat(target).st_ino == ino_before
-    assert recheck(snapshots, fs) is RecheckVerdict.VALID
+    assert recheck(snapshots, fs) is RecheckVerdict.NODE_REPLACED
 
 
 # ---------------------------------------------------------------------------
@@ -164,50 +177,81 @@ def test_recheck_valid_on_inplace_content_change_same_inode(tmp_path: Path) -> N
 def test_snapshot_paths_captures_parent_and_node_ids_pure() -> None:
     fs = FakeFsView(
         {
-            "/ws/a": _FakeEntry(exists=True, realpath="/ws/a", parent=(3, 7), node=(3, 70)),
-            "/ws/b": _FakeEntry(exists=True, realpath="/ws/b", parent=(4, 8), node=(4, 80)),
+            "/ws/a": _FakeEntry(True, "/ws/a", parent=(3, 7, 90), node=(3, 70, 100)),
+            "/ws/b": _FakeEntry(True, "/ws/b", parent=(4, 8, 91), node=(4, 80, 101)),
         }
     )
     snaps = snapshot_paths(["/ws/a", "/ws/b"], fs)
     assert snaps == (
-        _snap("/ws/a", parent=(3, 7), node=(3, 70)),
-        _snap("/ws/b", parent=(4, 8), node=(4, 80)),
+        _snap("/ws/a", parent=(3, 7, 90), node=(3, 70, 100)),
+        _snap("/ws/b", parent=(4, 8, 91), node=(4, 80, 101)),
     )
 
 
 def test_recheck_pure_all_clean_is_valid() -> None:
     p = "/ws/a"
-    fs = FakeFsView({p: _FakeEntry(exists=True, realpath=p, parent=(1, 1), node=(1, 10))})
-    assert recheck([_snap(p, parent=(1, 1), node=(1, 10))], fs) is RecheckVerdict.VALID
+    fs = FakeFsView({p: _FakeEntry(True, p, parent=(1, 1, 1), node=(1, 10, 1))})
+    assert recheck([_snap(p, parent=(1, 1, 1), node=(1, 10, 1))], fs) is RecheckVerdict.VALID
+
+
+def test_recheck_rejects_a_recycled_node_number() -> None:
+    # The recycled-inode hole: SAME (dev, ino) as approved, but the node was
+    # unlinked+recreated and the inode number was reused -> only the ctime
+    # differs, and that alone must fail closed (I6).
+    path = "/ws/a"
+    approved = (3, 70, 100)
+    fs = FakeFsView(
+        {path: _FakeEntry(True, path, parent=(3, 7, 90), node=(3, 70, 200))}
+    )
+    assert recheck([_snap(path, parent=(3, 7, 90), node=approved)], fs) \
+        is RecheckVerdict.NODE_REPLACED
+
+
+def test_recheck_rejects_a_recycled_parent_number() -> None:
+    path = "/ws/a"
+    fs = FakeFsView(
+        {path: _FakeEntry(True, path, parent=(3, 7, 200), node=(3, 70, 100))}
+    )
+    assert recheck([_snap(path, parent=(3, 7, 90), node=(3, 70, 100))], fs) \
+        is RecheckVerdict.PARENT_SWAPPED
 
 
 def test_recheck_pure_dangling_precedes_everything() -> None:
     # A snapshot that is SIMULTANEOUSLY vanished + retargeted + reparented +
     # node-replaced must report DANGLING (existence is checked first).
     p = "/ws/a"
-    fs = FakeFsView({p: _FakeEntry(exists=False, realpath="/other", parent=(9, 9), node=(9, 90))})
-    assert recheck([_snap(p, parent=(1, 1), node=(1, 10))], fs) is RecheckVerdict.DANGLING
+    fs = FakeFsView({p: _FakeEntry(False, "/other", parent=(9, 9, 9), node=(9, 90, 9))})
+    assert recheck([_snap(p, parent=(1, 1, 1), node=(1, 10, 1))], fs) is RecheckVerdict.DANGLING
 
 
 def test_recheck_pure_retarget_precedes_parent_and_node() -> None:
     p = "/ws/a"
-    fs = FakeFsView({p: _FakeEntry(exists=True, realpath="/other", parent=(9, 9), node=(9, 90))})
-    assert recheck([_snap(p, parent=(1, 1), node=(1, 10))], fs) is RecheckVerdict.PATH_RETARGETED
+    fs = FakeFsView({p: _FakeEntry(True, "/other", parent=(9, 9, 9), node=(9, 90, 9))})
+    assert (
+        recheck([_snap(p, parent=(1, 1, 1), node=(1, 10, 1))], fs)
+        is RecheckVerdict.PATH_RETARGETED
+    )
 
 
 def test_recheck_pure_parent_precedes_node() -> None:
     # Parent swapped AND node replaced -> PARENT_SWAPPED wins (checked first).
     p = "/ws/a"
-    fs = FakeFsView({p: _FakeEntry(exists=True, realpath=p, parent=(9, 9), node=(9, 90))})
-    assert recheck([_snap(p, parent=(1, 1), node=(1, 10))], fs) is RecheckVerdict.PARENT_SWAPPED
+    fs = FakeFsView({p: _FakeEntry(True, p, parent=(9, 9, 9), node=(9, 90, 9))})
+    assert (
+        recheck([_snap(p, parent=(1, 1, 1), node=(1, 10, 1))], fs)
+        is RecheckVerdict.PARENT_SWAPPED
+    )
 
 
 def test_recheck_pure_node_only_is_node_replaced() -> None:
     # Exists, re-resolves to self, same parent, but the node's own inode changed
     # -> the atomic rename-over vector.
     p = "/ws/a"
-    fs = FakeFsView({p: _FakeEntry(exists=True, realpath=p, parent=(1, 1), node=(9, 90))})
-    assert recheck([_snap(p, parent=(1, 1), node=(1, 10))], fs) is RecheckVerdict.NODE_REPLACED
+    fs = FakeFsView({p: _FakeEntry(True, p, parent=(1, 1, 1), node=(9, 90, 9))})
+    assert (
+        recheck([_snap(p, parent=(1, 1, 1), node=(1, 10, 1))], fs)
+        is RecheckVerdict.NODE_REPLACED
+    )
 
 
 def test_recheck_returns_first_failure_in_snapshot_order() -> None:
@@ -215,12 +259,12 @@ def test_recheck_returns_first_failure_in_snapshot_order() -> None:
     p_dang = "/ws/dang"
     fs = FakeFsView(
         {
-            p_ret: _FakeEntry(exists=True, realpath="/other", parent=(1, 1), node=(1, 10)),
-            p_dang: _FakeEntry(exists=False, realpath=p_dang, parent=(2, 2), node=(2, 20)),
+            p_ret: _FakeEntry(True, "/other", parent=(1, 1, 1), node=(1, 10, 1)),
+            p_dang: _FakeEntry(False, p_dang, parent=(2, 2, 2), node=(2, 20, 2)),
         }
     )
-    snap_ret = _snap(p_ret, parent=(1, 1), node=(1, 10))
-    snap_dang = _snap(p_dang, parent=(2, 2), node=(2, 20))
+    snap_ret = _snap(p_ret, parent=(1, 1, 1), node=(1, 10, 1))
+    snap_dang = _snap(p_dang, parent=(2, 2, 2), node=(2, 20, 2))
     # First failing snapshot in the given order wins (deterministic).
     assert recheck([snap_ret, snap_dang], fs) is RecheckVerdict.PATH_RETARGETED
     assert recheck([snap_dang, snap_ret], fs) is RecheckVerdict.DANGLING
@@ -278,7 +322,8 @@ def test_osfsview_node_ids_raises_recheck_error_when_the_node_is_unlinked(
     target.write_text("x", encoding="utf-8")
     view = OsFsView()
     before = view.node_ids(str(target))  # baseline: the happy path really works
-    assert before == (os.stat(target).st_dev, os.stat(target).st_ino)
+    info = os.stat(target)
+    assert before == (info.st_dev, info.st_ino, info.st_ctime_ns)
 
     target.unlink()  # the racing unlink
 
@@ -298,7 +343,8 @@ def test_osfsview_parent_ids_raises_recheck_error_when_the_parent_is_unlinked(
     target.write_text("x", encoding="utf-8")
     view = OsFsView()
     before = view.parent_ids(str(target))  # baseline: the happy path really works
-    assert before == (os.stat(parent).st_dev, os.stat(parent).st_ino)
+    info = os.stat(parent)
+    assert before == (info.st_dev, info.st_ino, info.st_ctime_ns)
 
     target.unlink()
     parent.rmdir()  # the racing unlink of the PARENT
