@@ -186,7 +186,7 @@
         },
         {
           "name": "bubblewrap + scoped AppArmor userns profile",
-          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y bubblewrap apparmor-profiles\nprofile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict\ntest -r \"$profile\"\nsudo install -m 0644 \"$profile\" /etc/apparmor.d/bwrap-userns-restrict\nsudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y bubblewrap apparmor-profiles cargo\nprofile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict\ntest -r \"$profile\"\nsudo install -m 0644 \"$profile\" /etc/apparmor.d/bwrap-userns-restrict\nsudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
         },
         {
           "name": "install (hashes enforced, ADR-005)",
@@ -217,7 +217,7 @@
         },
         {
           "name": "bubblewrap + scoped AppArmor userns profile",
-          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y bubblewrap apparmor-profiles\nprofile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict\ntest -r \"$profile\"\nsudo install -m 0644 \"$profile\" /etc/apparmor.d/bwrap-userns-restrict\nsudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
+          "run": "set -euo pipefail\nsudo apt-get update\nsudo apt-get install -y bubblewrap apparmor-profiles cargo\nprofile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict\ntest -r \"$profile\"\nsudo install -m 0644 \"$profile\" /etc/apparmor.d/bwrap-userns-restrict\nsudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict"
         },
         {
           "name": "install (hashes enforced, ADR-005)",
