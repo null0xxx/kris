@@ -1469,7 +1469,13 @@ def _verify_written(
             return Verification.UNVERIFIED, None
         # `.get` rather than `[...]`: a path with no snapshot compares against
         # `None`, which no identity tuple equals — fail-closed by construction.
-        if fs_view.parent_ids(path) != approved.get(os.path.dirname(path)):
+        # The `[:2]` projection to `(st_dev, st_ino)` is DELIBERATE post-write
+        # behavior, not an accidental omission: this check runs AFTER the tool's
+        # own atomic write (tmp+fsync+rename), which legitimately changes the
+        # parent directory's `st_ctime_ns`, so a full three-field comparison
+        # would mark every valid write UNVERIFIED. Pre-exec `recheck` and the
+        # read handlers still compare the full three-field identity.
+        if fs_view.parent_ids(path)[:2] != approved.get(os.path.dirname(path)):
             return Verification.UNVERIFIED, None
     evidence = _file_snapshot(normalized.canonical_paths[0])
     if evidence is None:

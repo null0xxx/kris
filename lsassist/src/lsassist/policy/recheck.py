@@ -6,8 +6,8 @@ This module implements the POLICY side of the §7.5 TOCTOU chain, steps 1-3:
   (``realpath`` + per-component ``lstat``); this module consumes its output;
 - step 2 (token stores canonical paths + parent dir inode + node identity) is
   :func:`snapshot_paths` — it captures, per already-canonical path, the parent
-  directory's ``(st_dev, st_ino)`` AND the node's OWN ``(st_dev, st_ino)`` at
-  approval;
+  directory's ``(st_dev, st_ino, st_ctime_ns)`` AND the node's OWN
+  ``(st_dev, st_ino, st_ctime_ns)`` at approval;
 - step 3 (pre-exec re-canonicalization → identity compare) is :func:`recheck` —
   it re-resolves each snapshotted path just before execution and, fail-closed,
   reports the FIRST I6 invalidation it finds (dangling / retargeted / parent
@@ -20,14 +20,18 @@ and are OUT OF SCOPE here; step 8 (no command substitution) is structural
 re-canonicalization gate.
 
 BEST-EFFORT, NOT A CONTENT-INTEGRITY ORACLE (residual, documented honestly per
-atlas §10): the node ``(dev, ino)`` check catches an atomic rename-over swap (a
-DIFFERENT real file of the same name in the same parent — new inode), but it is
-NOT complete: an ``unlink`` + recreate that REUSES the freed inode number keeps
-the same ``(dev, ino)`` and is NOT caught here, and recheck never reads content.
-FULL file-identity / content integrity is the HANDLER's job — §7.5 step 4 (open
-``O_NOFOLLOW`` + ``dir_fd`` then ``fstat`` the SAME fd) and step 6 (post-exec
-inode + sha256 compare). recheck is a pre-filter over path STRUCTURE + node
-identity, not a byte-level oracle.
+atlas §10): the node ``(dev, ino, ctime_ns)`` check catches an atomic
+rename-over swap (a DIFFERENT real file of the same name in the same parent —
+new inode) AND an ``unlink`` + recreate that REUSES the freed inode number (same
+``(dev, ino)``, new ``st_ctime_ns``). The price of closing that hole is
+deliberate: an IN-PLACE write or metadata change at the same inode also bumps
+``st_ctime_ns`` and therefore INVALIDATES the approval (I6: a material change
+forces reapproval). ``st_ctime_ns`` can still be COARSE on some filesystems, so
+this is a strengthened contract, not perfect generation identity — and recheck
+never reads content. FULL file-identity / content integrity is the HANDLER's
+job — §7.5 step 4 (open ``O_NOFOLLOW`` + ``dir_fd`` then ``fstat`` the SAME fd)
+and step 6 (post-exec inode + sha256 compare). recheck is a pre-filter over path
+STRUCTURE + node identity, not a byte-level oracle.
 
 CROSS-PHASE FLAG (tools phase T3.x MUST close this): SPEC §7.5 step 6 post-exec
 verification is currently scoped to WRITE tools (SPEC:564), so a same-path
@@ -75,12 +79,12 @@ class FsView(Protocol):
         """The fully-resolved real path of ``path`` (symlinks + ``..`` collapsed)."""
         ...
 
-    def parent_ids(self, path: str) -> tuple[int, int]:
-        """The ``(st_dev, st_ino)`` of the PARENT directory of ``path``."""
+    def parent_ids(self, path: str) -> tuple[int, int, int]:
+        """The ``(st_dev, st_ino, st_ctime_ns)`` of the PARENT directory of ``path``."""
         ...
 
-    def node_ids(self, path: str) -> tuple[int, int]:
-        """The ``(st_dev, st_ino)`` of ``path`` ITSELF (the file's own inode)."""
+    def node_ids(self, path: str) -> tuple[int, int, int]:
+        """The ``(st_dev, st_ino, st_ctime_ns)`` of ``path`` ITSELF (its own inode)."""
         ...
 
     def exists(self, path: str) -> bool:
@@ -107,18 +111,22 @@ class RecheckVerdict(StrEnum):
 class PathSnapshot:
     """Approval-time capture for ONE canonical path (§7.5 step 2).
 
-    Stores the canonical path, its parent directory's ``(st_dev, st_ino)``, and
-    the node's OWN ``(st_dev, st_ino)`` at approval time — so :func:`recheck` can
-    later detect (a) a parent rename+recreate / mount swap that changed the
-    parent inode and (b) an atomic rename-over that replaced the file with a new
-    inode. Frozen — a snapshot is a value.
+    Stores the canonical path, its parent directory's ``(st_dev, st_ino,
+    st_ctime_ns)``, and the node's OWN ``(st_dev, st_ino, st_ctime_ns)`` at
+    approval time — so :func:`recheck` can later detect (a) a parent
+    rename+recreate / mount swap that changed the parent identity and (b) an
+    atomic rename-over OR an inode-number-reusing recreate that replaced the
+    file (the ctime is what makes the reused-inode case visible). Frozen — a
+    snapshot is a value.
     """
 
     canonical_path: str
     parent_dev: int
     parent_ino: int
+    parent_ctime_ns: int
     node_dev: int
     node_ino: int
+    node_ctime_ns: int
 
 
 def snapshot_paths(canonical_paths: Sequence[str], fs_view: FsView) -> tuple[PathSnapshot, ...]:
@@ -127,20 +135,22 @@ def snapshot_paths(canonical_paths: Sequence[str], fs_view: FsView) -> tuple[Pat
     PURE over ``fs_view`` (only the injected boundary performs any real I/O).
     Inputs are ALREADY-canonical paths (produced upstream by
     ``canonical.canonicalize``); this records each one's current parent
-    ``(dev, ino)`` AND node ``(dev, ino)`` for the later pre-exec comparison,
-    preserving input order.
+    ``(dev, ino, ctime_ns)`` AND node ``(dev, ino, ctime_ns)`` for the later
+    pre-exec comparison, preserving input order.
     """
     snapshots: list[PathSnapshot] = []
     for path in canonical_paths:
-        parent_dev, parent_ino = fs_view.parent_ids(path)
-        node_dev, node_ino = fs_view.node_ids(path)
+        parent_dev, parent_ino, parent_ctime_ns = fs_view.parent_ids(path)
+        node_dev, node_ino, node_ctime_ns = fs_view.node_ids(path)
         snapshots.append(
             PathSnapshot(
                 canonical_path=path,
                 parent_dev=parent_dev,
                 parent_ino=parent_ino,
+                parent_ctime_ns=parent_ctime_ns,
                 node_dev=node_dev,
                 node_ino=node_ino,
+                node_ctime_ns=node_ctime_ns,
             )
         )
     return tuple(snapshots)
@@ -161,21 +171,27 @@ def recheck(snapshots: Sequence[PathSnapshot], fs_view: FsView) -> RecheckVerdic
     2. re-resolution differs from the canonical path -> :data:`PATH_RETARGETED`:
        the path no longer resolves to itself, i.e. a component became or was
        retargeted to a symlink (I6).
-    3. parent ``(dev, ino)`` differs from the snapshot -> :data:`PARENT_SWAPPED`:
-       the parent dir was renamed+recreated / mount-swapped to a new inode (I6).
-    4. node ``(dev, ino)`` differs from the snapshot -> :data:`NODE_REPLACED`:
-       the file itself was atomically replaced (``.new`` + ``os.rename`` over the
-       approved name → SAME path + SAME parent but a NEW inode) (I6).
+    3. parent ``(dev, ino, ctime_ns)`` differs from the snapshot ->
+       :data:`PARENT_SWAPPED`: the parent dir was renamed+recreated /
+       mount-swapped (I6) — including a recreate that REUSED the freed inode
+       number, which only the ctime exposes.
+    4. node ``(dev, ino, ctime_ns)`` differs from the snapshot ->
+       :data:`NODE_REPLACED`: the file itself was replaced (``.new`` +
+       ``os.rename`` over the approved name → SAME path + SAME parent but a NEW
+       inode), OR unlinked+recreated with the SAME inode number reused (only
+       the ctime changes) (I6).
 
     Returns the FIRST failing snapshot's verdict (deterministic snapshot order),
     else :data:`VALID`.
 
     An IN-PLACE CONTENT change at the SAME path+inode (truncate+rewrite,
-    ``open("w")``) keeps the same node ``(dev, ino)`` -> passes check 4 -> stays
-    :data:`VALID`: content is NOT a path-level invalidator; content integrity is
-    the handler's job (§7.5 step 4). ONLY a file REPLACEMENT (new inode) trips
-    :data:`NODE_REPLACED`. BEST-EFFORT residual (see module docstring): an
-    inode-number-reusing ``unlink``+recreate is NOT caught here.
+    ``open("w")``) keeps the same node ``(dev, ino)`` but bumps
+    ``st_ctime_ns`` -> trips check 4 -> :data:`NODE_REPLACED`: a material change
+    after approval invalidates it and forces reapproval (I6). This stricter
+    behavior is INTENTIONAL — it is the cost of closing the recycled-inode
+    hole. BEST-EFFORT residual (see module docstring): ``st_ctime_ns`` can be
+    coarse on some filesystems, so a recreate landing inside one timestamp tick
+    is still not distinguishable.
     """
     for snapshot in snapshots:
         canonical = snapshot.canonical_path
@@ -183,15 +199,24 @@ def recheck(snapshots: Sequence[PathSnapshot], fs_view: FsView) -> RecheckVerdic
             return RecheckVerdict.DANGLING
         if fs_view.realpath(canonical) != canonical:
             return RecheckVerdict.PATH_RETARGETED
-        if fs_view.parent_ids(canonical) != (snapshot.parent_dev, snapshot.parent_ino):
+        if fs_view.parent_ids(canonical) != (
+            snapshot.parent_dev,
+            snapshot.parent_ino,
+            snapshot.parent_ctime_ns,
+        ):
             return RecheckVerdict.PARENT_SWAPPED
         # §7.5 step-3 "resolve → compare" extended to the NODE's own identity:
         # catches an atomic same-name rename-over (new inode) that checks 2-3
-        # miss. CROSS-PHASE (read/exec): passing here is only a pre-filter — a
+        # miss, and an inode-number-reusing recreate (same (dev, ino), new
+        # ctime). CROSS-PHASE (read/exec): passing here is only a pre-filter — a
         # same-path swap in the exec window has no post-exec backstop for
         # READ/EXEC tools (SPEC:564 = write-only); the handler phase (T3.x) must
         # fstat-pin the opened inode. See the module-level CROSS-PHASE FLAG.
-        if fs_view.node_ids(canonical) != (snapshot.node_dev, snapshot.node_ino):
+        if fs_view.node_ids(canonical) != (
+            snapshot.node_dev,
+            snapshot.node_ino,
+            snapshot.node_ctime_ns,
+        ):
             return RecheckVerdict.NODE_REPLACED
     return RecheckVerdict.VALID
 
@@ -242,19 +267,19 @@ class OsFsView:
     def realpath(self, path: str) -> str:
         return os.path.realpath(path)
 
-    def parent_ids(self, path: str) -> tuple[int, int]:
+    def parent_ids(self, path: str) -> tuple[int, int, int]:
         try:
             info = os.stat(os.path.dirname(path))
         except OSError as exc:  # racing unlink/rename of the parent — fail closed
             raise RecheckError(f"parent stat failed for {path!r}: {exc}") from exc
-        return (info.st_dev, info.st_ino)
+        return (info.st_dev, info.st_ino, info.st_ctime_ns)
 
-    def node_ids(self, path: str) -> tuple[int, int]:
+    def node_ids(self, path: str) -> tuple[int, int, int]:
         try:
             info = os.stat(path)
         except OSError as exc:  # racing unlink/rename of the node — fail closed
             raise RecheckError(f"node stat failed for {path!r}: {exc}") from exc
-        return (info.st_dev, info.st_ino)
+        return (info.st_dev, info.st_ino, info.st_ctime_ns)
 
     def exists(self, path: str) -> bool:
         return os.path.exists(path)

@@ -13,8 +13,9 @@ approved file with a different one at the SAME path. Nothing downstream would
 notice: the path still canonicalizes identically, and the content is just
 "whatever the file said". The fix is to stop trusting the NAME. This module opens
 relative to a pinned parent ``dir_fd`` with ``O_NOFOLLOW``, then ``fstat``s the
-resulting FD and compares ``(st_dev, st_ino)`` against the identity captured at
-approval time. Every byte returned comes from THAT fd — never from a second
+resulting FD and compares ``(st_dev, st_ino, st_ctime_ns)`` against the identity
+captured at approval time. Every byte returned comes from THAT fd — never from a
+second
 ``open`` of the same path, which would reopen the window it just closed.
 
 The shared half of that machinery lives in :mod:`~lsassist.tools.handlers._common`,
@@ -91,9 +92,7 @@ def read_file(context: HandlerContext) -> dict[str, Any]:
     if not parent or not name:
         raise HandlerRefused(READ_FAILED, f"{target!r} has no parent/name to open against")
 
-    want_parent_dev, want_parent_ino, want_node_dev, want_node_ino = approved_identity(
-        context, target
-    )
+    want_parent, want_node = approved_identity(context, target)
     limit = context.manifest.output_limits.max_result_chars
 
     try:
@@ -102,7 +101,7 @@ def read_file(context: HandlerContext) -> dict[str, Any]:
         raise HandlerRefused(READ_FAILED, f"cannot open parent of {target!r}: {exc!r}") from exc
     try:
         parent_stat = os.fstat(dir_fd)
-        if (parent_stat.st_dev, parent_stat.st_ino) != (want_parent_dev, want_parent_ino):
+        if (parent_stat.st_dev, parent_stat.st_ino, parent_stat.st_ctime_ns) != want_parent:
             # The directory the name resolves through is a different directory
             # than the one approval measured — the name now means something else.
             raise HandlerRefused(
@@ -118,7 +117,7 @@ def read_file(context: HandlerContext) -> dict[str, Any]:
         except OSError as exc:
             raise HandlerRefused(READ_FAILED, f"cannot open {target!r}: {exc!r}") from exc
         try:
-            info = verify_node(fd, want_node_dev, want_node_ino, target)
+            info = verify_node(fd, want_node, target)
             if not stat_module.S_ISREG(info.st_mode):
                 raise HandlerRefused(READ_FAILED, f"{target!r} is not a regular file")
             # Read one byte past the limit so "exactly at the limit" is not

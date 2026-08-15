@@ -3,20 +3,24 @@
 Modelled entirely over a PURE fake ``FsView`` (no real I/O): each example builds
 a pristine snapshot for a set of canonical paths, then applies an arbitrary
 SEQUENCE of filesystem mutations (symlink retarget, parent rename+recreate,
-atomic file-swap/rename-over, delete, and content/no-op non-events). The
-properties assert the bijection between "did anything PATH/NODE-relevant
-change?" and the verdict:
+atomic file-swap/rename-over, recycled-inode recreate, delete, and in-place
+content writes / no-op non-events). The properties assert the bijection between
+"did anything PATH/NODE-relevant change?" and the verdict:
 
 - single path: :func:`recheck` returns EXACTLY the verdict predicted by the
   first-failure priority
-  ``exists -> re-resolves-to-self -> parent (dev,ino) -> node (dev,ino)``
+  ``exists -> re-resolves-to-self -> parent (dev,ino,ctime) -> node (dev,ino,ctime)``
   (pins the deterministic ordering, not merely non-VALID);
 - many paths: the result is :data:`VALID` IFF every path is clean, else it is
   one of the invalid verdicts — there is no third "stale-but-valid" outcome;
-- positive control: a content/no-op-only sequence is ALWAYS :data:`VALID`.
+- positive control: a noop-only sequence is ALWAYS :data:`VALID`.
 
 The atomic file-swap vector ("swap": SAME path + SAME parent, NEW node inode) is
-INCLUDED — it is the C1 regression modelled at the pure level.
+INCLUDED — it is the C1 regression modelled at the pure level. The "recycle"
+vector (SAME ``(dev, ino)``, NEW ``ctime_ns`` — an unlink+recreate that reused
+the freed inode number) is the recycled-inode hole this hardening closes, and
+"content" (in-place write) now also bumps the node ctime and invalidates: a
+material change after approval forces reapproval (I6).
 
 Run with ``--hypothesis-profile=ci`` for >=200 examples (see
 ``tests/property/conftest``).
@@ -41,8 +45,8 @@ from lsassist.policy.recheck import (
 class _Entry:
     exists: bool
     realpath: str
-    parent: tuple[int, int]
-    node: tuple[int, int]
+    parent: tuple[int, int, int]
+    node: tuple[int, int, int]
 
 
 class _FakeFsView:
@@ -54,27 +58,28 @@ class _FakeFsView:
     def realpath(self, path: str) -> str:
         return self.entries[path].realpath
 
-    def parent_ids(self, path: str) -> tuple[int, int]:
+    def parent_ids(self, path: str) -> tuple[int, int, int]:
         return self.entries[path].parent
 
-    def node_ids(self, path: str) -> tuple[int, int]:
+    def node_ids(self, path: str) -> tuple[int, int, int]:
         return self.entries[path].node
 
     def exists(self, path: str) -> bool:
         return self.entries[path].exists
 
 
-# The modelled fs mutations: four are (path/node)-relevant invalidators, one
-# ("content") is deliberately NOT (in-place content integrity is step 4's job).
-_MUTATIONS = ("delete", "retarget", "reparent", "swap", "content")
+# The modelled fs mutations: five are (path/node)-relevant invalidators; only a
+# true "noop" is not. "content" (an in-place write) now bumps the node ctime and
+# therefore DOES invalidate — a material change forces reapproval (I6).
+_MUTATIONS = ("delete", "retarget", "reparent", "swap", "recycle", "content")
 
 
 def _apply(entry: _Entry, mutation: str, tag: int) -> _Entry:
     """Deterministically transform one path's state by ``mutation``.
 
-    ``tag`` makes retarget/reparent/swap produce values PROVABLY distinct from
-    the pristine canonical path / parent ids / node ids, so the ground-truth
-    predicate below is unambiguous.
+    ``tag`` makes retarget/reparent/swap/recycle/content produce values PROVABLY
+    distinct from the pristine canonical path / parent ids / node ids, so the
+    ground-truth predicate below is unambiguous.
     """
     if mutation == "delete":
         return replace(entry, exists=False)
@@ -83,13 +88,18 @@ def _apply(entry: _Entry, mutation: str, tag: int) -> _Entry:
         # re-resolves to a DIFFERENT real path.
         return replace(entry, exists=True, realpath=f"/RETARGET/{tag}")
     if mutation == "reparent":
-        # Parent dir renamed+recreated: fresh (dev, ino), path re-resolves fine.
-        return replace(entry, exists=True, parent=(1000 + tag, 2000 + tag))
+        # Parent dir renamed+recreated: fresh (dev, ino, ctime), path re-resolves fine.
+        return replace(entry, exists=True, parent=(1000 + tag, 2000 + tag, 3000 + tag))
     if mutation == "swap":
         # Atomic rename-over: SAME path + SAME parent, but a NEW node inode.
-        return replace(entry, exists=True, node=(5000 + tag, 6000 + tag))
-    # "content": no path/node-relevant change whatsoever (no-op for recheck).
-    return entry
+        return replace(entry, exists=True, node=(5000 + tag, 6000 + tag, 7000 + tag))
+    if mutation == "recycle":
+        # unlink+recreate that REUSED the freed inode number: same (dev, ino),
+        # only the ctime differs — the hole two-field identity could not see.
+        return replace(entry, exists=True, node=(entry.node[0], entry.node[1], 9000 + tag))
+    # "content": in-place write at the same inode — bumps the node ctime, which
+    # is a material change and therefore invalidates the approval (I6).
+    return replace(entry, node=(entry.node[0], entry.node[1], 11000 + tag))
 
 
 def _predict_single(snapshot: PathSnapshot, entry: _Entry) -> RecheckVerdict:
@@ -98,9 +108,9 @@ def _predict_single(snapshot: PathSnapshot, entry: _Entry) -> RecheckVerdict:
         return RecheckVerdict.DANGLING
     if entry.realpath != snapshot.canonical_path:
         return RecheckVerdict.PATH_RETARGETED
-    if entry.parent != (snapshot.parent_dev, snapshot.parent_ino):
+    if entry.parent != (snapshot.parent_dev, snapshot.parent_ino, snapshot.parent_ctime_ns):
         return RecheckVerdict.PARENT_SWAPPED
-    if entry.node != (snapshot.node_dev, snapshot.node_ino):
+    if entry.node != (snapshot.node_dev, snapshot.node_ino, snapshot.node_ctime_ns):
         return RecheckVerdict.NODE_REPLACED
     return RecheckVerdict.VALID
 
@@ -110,8 +120,8 @@ def _single_path_scenario(
     draw: st.DrawFn,
 ) -> tuple[tuple[PathSnapshot, ...], _FakeFsView, RecheckVerdict]:
     canonical = "/ws/" + draw(st.sampled_from(["a", "b", "c/d", "deep/nested/x"]))
-    parent = (draw(st.integers(1, 9)), draw(st.integers(1, 999)))
-    node = (draw(st.integers(1, 9)), draw(st.integers(1, 999)))
+    parent = (draw(st.integers(1, 9)), draw(st.integers(1, 999)), draw(st.integers(1, 999)))
+    node = (draw(st.integers(1, 9)), draw(st.integers(1, 999)), draw(st.integers(1, 999)))
     entry = _Entry(exists=True, realpath=canonical, parent=parent, node=node)
     fs = _FakeFsView({canonical: entry})
     snapshots = snapshot_paths([canonical], fs)
@@ -145,8 +155,8 @@ def _multi_path_scenario(
         entries[canonical] = _Entry(
             exists=True,
             realpath=canonical,
-            parent=(1 + j, 100 + j),
-            node=(1 + j, 500 + j),
+            parent=(1 + j, 100 + j, 700 + j),
+            node=(1 + j, 500 + j, 900 + j),
         )
     fs = _FakeFsView(dict(entries))
     canonicals = list(entries.keys())
@@ -155,7 +165,7 @@ def _multi_path_scenario(
     all_clean = True
     for i, canonical in enumerate(canonicals):
         mutation = draw(st.sampled_from((*_MUTATIONS, "noop")))
-        if mutation not in ("content", "noop"):
+        if mutation != "noop":
             fs.entries[canonical] = _apply(fs.entries[canonical], mutation, tag=i)
             all_clean = False
     return snapshots, fs, all_clean
@@ -183,18 +193,25 @@ def test_multi_path_valid_iff_all_clean_no_middle_state(
 
 @given(
     names=st.lists(st.sampled_from(["a", "b", "c"]), min_size=1, max_size=3, unique=True),
-    ops=st.lists(st.sampled_from(["content", "noop"]), max_size=6),
+    ops=st.lists(st.sampled_from(["noop"]), max_size=6),
 )
-def test_content_and_noop_only_is_always_valid(names: list[str], ops: list[str]) -> None:
-    """Positive control: no path/node-relevant mutation ever ⇒ always VALID."""
+def test_noop_only_is_always_valid(names: list[str], ops: list[str]) -> None:
+    """Positive control: no path/node-relevant mutation ever ⇒ always VALID.
+
+    Only a true noop remains a non-event: an in-place "content" write bumps the
+    node ctime and is now an invalidator, so it no longer belongs here.
+    """
     entries = {
         "/ws/"
         + name: _Entry(
-            exists=True, realpath="/ws/" + name, parent=(1 + j, 7 + j), node=(1 + j, 900 + j)
+            exists=True,
+            realpath="/ws/" + name,
+            parent=(1 + j, 7 + j, 70 + j),
+            node=(1 + j, 900 + j, 950 + j),
         )
         for j, name in enumerate(names)
     }
     fs = _FakeFsView(dict(entries))
     snapshots = snapshot_paths(list(entries.keys()), fs)
-    # content/no-op events never touch existence / realpath / parent / node ids.
+    # noop events never touch existence / realpath / parent / node identities.
     assert recheck(snapshots, fs) is RecheckVerdict.VALID

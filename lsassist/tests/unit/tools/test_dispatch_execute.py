@@ -1493,11 +1493,11 @@ class DelegatingFsView:
     def realpath(self, path: str) -> str:
         return str(self._call("realpath", path))
 
-    def parent_ids(self, path: str) -> tuple[int, int]:
-        return cast("tuple[int, int]", self._call("parent_ids", path))
+    def parent_ids(self, path: str) -> tuple[int, int, int]:
+        return cast("tuple[int, int, int]", self._call("parent_ids", path))
 
-    def node_ids(self, path: str) -> tuple[int, int]:
-        return cast("tuple[int, int]", self._call("node_ids", path))
+    def node_ids(self, path: str) -> tuple[int, int, int]:
+        return cast("tuple[int, int, int]", self._call("node_ids", path))
 
     def exists(self, path: str) -> bool:
         return bool(self._call("exists", path))
@@ -1777,7 +1777,7 @@ def test_a_recheck_that_cannot_probe_the_filesystem_BLOCKS(
     )
     spawned: list[list[str]] = []
 
-    def racing(path: str) -> tuple[int, int]:
+    def racing(path: str) -> tuple[int, int, int]:
         raise RecheckError(f"parent stat failed for {path!r}")
 
     outcome = run(
@@ -1811,8 +1811,16 @@ def test_a_step_5_refusal_becomes_a_BLOCKED_outcome_not_an_exception(
     manifest = write_manifest(
         capabilities={"fs": "write_scoped", "net": "none", "proc": "spawn_argv"}
     )
+    # The target lives in a SUBdirectory on purpose: creating `.venv/bin` under
+    # the workspace bumps the workspace's own ctime, and with the three-field
+    # approval identity the step-3 recheck would (correctly, per I6) refuse a
+    # target whose PARENT is the workspace before step 5 ever runs. Isolating
+    # the target's parent keeps this test pinned on the step-5 refusal.
+    sub = workspace / "d"
+    sub.mkdir()
+    (sub / "a.txt").write_text("x\n", encoding="utf-8")
     decision = proceeding(
-        environment, manifest, {"path": str(workspace / "a.txt")}, path_args=["path"]
+        environment, manifest, {"path": str(sub / "a.txt")}, path_args=["path"]
     )
     (workspace / ".venv" / "bin").mkdir(parents=True)
     spawned: list[list[str]] = []
@@ -1909,7 +1917,7 @@ def test_a_parent_swapped_DURING_verification_is_UNVERIFIED_and_still_journalled
     )
     ran = {"yet": False}
 
-    def racing_after_exec(path: str) -> tuple[int, int]:
+    def racing_after_exec(path: str) -> tuple[int, int, int]:
         if ran["yet"]:
             raise RecheckError(f"parent stat failed for {path!r}")
         return OsFsView().parent_ids(path)
